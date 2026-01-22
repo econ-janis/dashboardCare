@@ -73,7 +73,7 @@
   /* File input: mantener natural pero con estilo */
   input[type="file"] {
     height: auto;
-    padding: 8px;
+    padding: 18px;
     border-radius: 10px;
     border: 1px solid rgb(var(--color-border));
     background: #ffffff;

@@ -1,0 +1,29 @@
+import * as React from "react"
+
+export const Select = ({ children, value, onValueChange }: any) => {
+  return (
+    <div className="relative w-full">
+      {React.Children.map(children, (child) => 
+        React.cloneElement(child, { value, onValueChange })
+      )}
+    </div>
+  );
+};
+
+export const SelectTrigger = ({ children, className }: any) => (
+  <div className={`flex h-9 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ${className}`}>
+    {children}
+  </div>
+);
+
+export const SelectValue = ({ placeholder }: any) => <span>{placeholder}</span>;
+
+export const SelectContent = ({ children }: any) => (
+  <select className="absolute opacity-0 inset-0 w-full cursor-pointer" onChange={(e) => (window as any).lastSelectChange(e.target.value)}>
+    {children}
+  </select>
+);
+
+export const SelectItem = ({ value, children }: any) => (
+  <option value={value}>{children}</option>
+);
