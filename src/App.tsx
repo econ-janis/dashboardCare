@@ -655,6 +655,7 @@ export default function JiraExecutiveDashboard() {
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [showExecutiveReport, setShowExecutiveReport] = useState(false);
 
   // Filters: rango por mes (YYYY-MM)
   const [fromMonth, setFromMonth] = useState<string>("all");
@@ -1686,49 +1687,75 @@ export default function JiraExecutiveDashboard() {
               <Button
                 className="text-white"
                 style={{ backgroundColor: "#be185d" }}
-                disabled={exporting || !filtered.length}
-                onClick={async () => {
-                  setExporting(true);
-                  setError(null);
-
-                  try {
-                    if (!filtered.length) {
-                      setError("No hay datos filtrados para exportar.");
-                      return;
-                    }
-
-                    const now = new Date();
-                    const y = now.getFullYear();
-                    const m = String(now.getMonth() + 1).padStart(2, "0");
-                    const d = String(now.getDate()).padStart(2, "0");
-                    const filename = `Reporte_Ejecutivo_Cliente_${y}${m}${d}.pdf`;
-
-                    const html = buildExecutiveReportHtml({
-                      title: "Reporte Ejecutivo - Cliente Filtrado",
-                      generatedAt: now,
-                      filters: {
-                        fromMonth: fromMonth === "all" ? autoRange.minMonth || "all" : fromMonth,
-                        toMonth: toMonth === "all" ? autoRange.maxMonth || "all" : toMonth,
-                        org: orgFilter === "all" ? "Todas" : orgFilter,
-                        assignee: assigneeFilter === "all" ? "Todos" : assigneeFilter,
-                        status: statusFilter === "all" ? "Todos" : statusFilter,
-                      },
-                      autoRange,
-                      executive: executiveReportData,
-                    });
-
-                    await exportExecutivePdfDirect({ html, filename });
-                    setError(null);
-                  } catch (e: any) {
-                    console.error(e);
-                    setError((e && (e.message || String(e))) || "No se pudo exportar el reporte ejecutivo.");
-                  } finally {
-                    setExporting(false);
-                  }
-                }}
+                disabled={!filtered.length}
+                onClick={() => setShowExecutiveReport((prev) => !prev)}
               >
-                {exporting ? "Generando Reporte Ejecutivo…" : "Generar Reporte Ejecutivo"}
+                {showExecutiveReport ? "Ocultar Reporte Ejecutivo" : "Generar Reporte Ejecutivo"}
               </Button>
+
+              {showExecutiveReport ? (
+                <div className="mt-4 rounded-lg border border-fuchsia-200 bg-white p-4">
+                  <div className="mb-3">
+                    <div className="text-sm font-semibold text-fuchsia-900">1️⃣ Resumen Ejecutivo</div>
+                    <div className="text-xs text-slate-600">
+                      {executiveReportData.monthLabel} vs {executiveReportData.prevMonthLabel}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {executiveReportData.metrics.map((metric) => {
+                      const dotColor =
+                        metric.status === "good"
+                          ? "bg-emerald-500"
+                          : metric.status === "warn"
+                            ? "bg-amber-500"
+                            : metric.status === "bad"
+                              ? "bg-red-500"
+                              : "bg-slate-400";
+
+                      const momLabel =
+                        metric.mom == null
+                          ? "Sin comparativo"
+                          : `${metric.mom > 0 ? "+" : ""}${metric.mom.toFixed(1)}% vs mes anterior`;
+
+                      return (
+                        <div key={metric.label} className="rounded-lg border border-fuchsia-100 bg-fuchsia-50 p-3">
+                          <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-slate-700">
+                            <span className={`h-2.5 w-2.5 rounded-full ${dotColor}`} />
+                            {metric.label}
+                          </div>
+                          <div className="text-xl font-semibold text-slate-900">{metric.value}</div>
+                          <div className="text-xs text-slate-500">{momLabel}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3 text-sm text-slate-700">
+                    <div className="rounded-lg border border-fuchsia-100 p-3">
+                      <div className="mb-1 font-semibold text-fuchsia-900">2️⃣ Performance Operativa</div>
+                      <p className="text-xs">Volumen, velocidad y cumplimiento SLA para decisiones de capacidad.</p>
+                    </div>
+                    <div className="rounded-lg border border-fuchsia-100 p-3">
+                      <div className="mb-1 font-semibold text-fuchsia-900">3️⃣ Calidad / Impacto</div>
+                      <p className="text-xs">Seguimiento de reaperturas y estabilidad del servicio para reducir fricción.</p>
+                    </div>
+                    <div className="rounded-lg border border-fuchsia-100 p-3">
+                      <div className="mb-1 font-semibold text-fuchsia-900">4️⃣ Plan de Acción</div>
+                      <p className="text-xs">Priorizar backlog, sostener SLA y ajustar capacidad del equipo.</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-lg border border-fuchsia-100 bg-fuchsia-50 p-3">
+                    <div className="text-sm font-semibold text-fuchsia-900">Insights ejecutivos</div>
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
+                      {executiveReportData.insights.map((insight, idx) => (
+                        <li key={idx}>{insight}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         </div>
