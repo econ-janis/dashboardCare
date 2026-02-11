@@ -1089,24 +1089,23 @@ export default function JiraExecutiveDashboard() {
       "completada",
     ]);
 
-    const avgResolutionHours = (rowsSubset: Row[]) => {
-      const vals = rowsSubset
-        .map((r) => (r.slaResponseHours != null && r.slaResponseHours >= 0 ? r.slaResponseHours : null))
-        .filter((v): v is number => v != null);
-      if (!vals.length) return null;
-      return vals.reduce((s, v) => s + v, 0) / vals.length;
-    };
-
     const resolvedCount = (rowsSubset: Row[]) =>
       rowsSubset.filter((r) => closedStatuses.has(String(r.estado || "").trim().toLowerCase())).length;
 
     const backlogCount = (rowsSubset: Row[]) =>
       rowsSubset.filter((r) => !closedStatuses.has(String(r.estado || "").trim().toLowerCase())).length;
 
-    const reopenedPct = (rowsSubset: Row[]) => {
-      if (!rowsSubset.length) return 0;
-      const reopened = rowsSubset.filter((r) => /reabiert/i.test(String(r.estado || ""))).length;
-      return pct(reopened, rowsSubset.length);
+    const backlogByStatus = (rowsSubset: Row[]) => {
+      const map = new Map<string, number>();
+      rowsSubset.forEach((r) => {
+        const statusRaw = String(r.estado || "").trim();
+        const statusKey = statusRaw.toLowerCase();
+        if (!statusRaw || closedStatuses.has(statusKey)) return;
+        map.set(statusRaw, (map.get(statusRaw) || 0) + 1);
+      });
+      return Array.from(map.entries())
+        .map(([status, count]) => ({ status, count }))
+        .sort((a, b) => b.count - a.count || a.status.localeCompare(b.status));
     };
 
     const ticketsCurrent = currentRows.length;
@@ -1115,12 +1114,9 @@ export default function JiraExecutiveDashboard() {
     const resolvedPrev = resolvedCount(previousRows);
     const slaCurrent = 100 - pct(currentRows.filter((r) => r.slaResponseStatus === "Incumplido").length, ticketsCurrent);
     const slaPrev = 100 - pct(previousRows.filter((r) => r.slaResponseStatus === "Incumplido").length, ticketsPrev);
-    const ttrCurrent = avgResolutionHours(currentRows);
-    const ttrPrev = avgResolutionHours(previousRows);
     const backlogCurrent = backlogCount(currentRows);
     const backlogPrev = backlogCount(previousRows);
-    const reopenCurrent = reopenedPct(currentRows);
-    const reopenPrev = reopenedPct(previousRows);
+    const backlogStatusCurrent = backlogByStatus(currentRows);
 
     const metricStatus = (metric: string, value: number) => {
       if (!Number.isFinite(value)) return "neutral" as const;
@@ -1129,19 +1125,9 @@ export default function JiraExecutiveDashboard() {
         if (value >= 90) return "warn" as const;
         return "bad" as const;
       }
-      if (metric === "reopen") {
-        if (value <= 5) return "good" as const;
-        if (value <= 10) return "warn" as const;
-        return "bad" as const;
-      }
       if (metric === "backlog") {
         if (value <= 25) return "good" as const;
         if (value <= 60) return "warn" as const;
-        return "bad" as const;
-      }
-      if (metric === "ttr") {
-        if (value <= 8) return "good" as const;
-        if (value <= 24) return "warn" as const;
         return "bad" as const;
       }
       return "neutral" as const;
@@ -1158,11 +1144,10 @@ export default function JiraExecutiveDashboard() {
 
       const ticketsMom = monthDeltaPct(ticketsCurrent, ticketsPrev);
       const backlogMom = monthDeltaPct(backlogCurrent, backlogPrev);
-      const ttrMom = ttrCurrent != null && ttrPrev != null ? monthDeltaPct(ttrCurrent, ttrPrev) : null;
       return [
         `Volumen de tickets ${ticketsMom == null ? "sin base comparativa" : ticketsMom >= 0 ? `al alza ${ticketsMom.toFixed(1)}%` : `a la baja ${Math.abs(ticketsMom).toFixed(1)}%`} en ${monthLabel(currentMonth)}.`,
         `Cumplimiento SLA ${slaCurrent >= 95 ? "estable" : "en riesgo"} en ${slaCurrent.toFixed(1)}%, foco en continuidad operativa.`,
-        `Backlog ${backlogMom == null ? "sin comparativo" : backlogMom <= 0 ? `disminuye ${Math.abs(backlogMom).toFixed(1)}%` : `aumenta ${backlogMom.toFixed(1)}%`}${ttrMom == null ? "" : ` y tiempo de resolución ${ttrMom <= 0 ? "mejora" : "se extiende"} ${Math.abs(ttrMom).toFixed(1)}%`}.`,
+        `Backlog ${backlogMom == null ? "sin comparativo" : backlogMom <= 0 ? `disminuye ${Math.abs(backlogMom).toFixed(1)}%` : `aumenta ${backlogMom.toFixed(1)}%`} y requiere foco por estado operativo.`,
       ];
     })();
 
@@ -1189,24 +1174,15 @@ export default function JiraExecutiveDashboard() {
           status: metricStatus("sla", slaCurrent),
         },
         {
-          label: "⏳ Tiempo prom. resolución",
-          value: ttrCurrent == null ? "—" : `${ttrCurrent.toFixed(1)} h`,
-          mom: ttrCurrent != null && ttrPrev != null ? monthDeltaPct(ttrCurrent, ttrPrev) : null,
-          status: metricStatus("ttr", ttrCurrent == null ? NaN : ttrCurrent),
-        },
-        {
           label: "🔴 Backlog al cierre",
           value: formatInt(backlogCurrent),
           mom: monthDeltaPct(backlogCurrent, backlogPrev),
           status: metricStatus("backlog", backlogCurrent),
         },
-        {
-          label: "🔁 % Reaperturas",
-          value: formatPct(reopenCurrent),
-          mom: monthDeltaPct(reopenCurrent, reopenPrev),
-          status: metricStatus("reopen", reopenCurrent),
-        },
       ],
+      backlogByStatus: backlogStatusCurrent,
+      resolvedMom: monthDeltaPct(resolvedCurrent, resolvedPrev),
+      backlogMom: monthDeltaPct(backlogCurrent, backlogPrev),
       insights: safeInsights,
     };
   }, [filtered]);
@@ -1668,9 +1644,7 @@ export default function JiraExecutiveDashboard() {
                     <li>🎫 Tickets recibidos (vs mes anterior)</li>
                     <li>✅ Tickets resueltos</li>
                     <li>⏱️ SLA cumplimiento (%)</li>
-                    <li>⏳ Tiempo promedio de resolución</li>
                     <li>🔴 Backlog al cierre</li>
-                    <li>🔁 % Reaperturas</li>
                   </ul>
                 </div>
                 <div className="rounded-lg border border-blue-300/30 bg-[#0b2c63]/70 p-3">
@@ -1702,7 +1676,9 @@ export default function JiraExecutiveDashboard() {
                   </div>
 
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    {executiveReportData.metrics.map((metric) => {
+                    {executiveReportData.metrics
+                      .filter((metric) => !metric.label.includes("resueltos") && !metric.label.includes("Backlog"))
+                      .map((metric) => {
                       const dotColor =
                         metric.status === "good"
                           ? "bg-emerald-500"
@@ -1727,7 +1703,54 @@ export default function JiraExecutiveDashboard() {
                           <div className="text-xs text-blue-700">{momLabel}</div>
                         </div>
                       );
-                    })}
+                      })}
+
+                    <div className="rounded-lg border-2 border-red-500 bg-gradient-to-b from-blue-50 to-white p-3 md:col-span-2 xl:col-span-1">
+                      <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-[#0a2f6f]">
+                        <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                        ✅ Tickets resueltos + 🔴 Backlog al cierre
+                      </div>
+                      <div className="space-y-1 text-xs text-slate-700">
+                        <div>
+                          <span className="font-semibold text-slate-900">Resueltos:</span>{" "}
+                          {executiveReportData.metrics.find((m) => m.label.includes("resueltos"))?.value || "0"}
+                          <span className="ml-2 text-blue-700">
+                            {(() => {
+                              const mom = executiveReportData.resolvedMom;
+                              if (mom == null) return "Sin comparativo";
+                              return `${mom > 0 ? "+" : ""}${mom.toFixed(1)}% vs mes anterior`;
+                            })()}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-slate-900">Backlog:</span>{" "}
+                          {executiveReportData.metrics.find((m) => m.label.includes("Backlog"))?.value || "0"}
+                          <span className="ml-2 text-blue-700">
+                            {(() => {
+                              const mom = executiveReportData.backlogMom;
+                              if (mom == null) return "Sin comparativo";
+                              return `${mom > 0 ? "+" : ""}${mom.toFixed(1)}% vs mes anterior`;
+                            })()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-lg border border-blue-100 bg-white p-3">
+                    <div className="mb-2 text-sm font-semibold text-[#0a2f6f]">Backlog al cierre · Apertura por estados</div>
+                    {executiveReportData.backlogByStatus.length ? (
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {executiveReportData.backlogByStatus.map((item) => (
+                          <div key={item.status} className="rounded-md border border-blue-100 bg-blue-50/60 px-3 py-2 text-sm">
+                            <span className="font-medium text-slate-800">{item.status}</span>
+                            <span className="ml-2 font-semibold text-[#0a2f6f]">{formatInt(item.count)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-600">Sin backlog para el período seleccionado.</p>
+                    )}
                   </div>
 
                   <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3 text-sm text-slate-700">
