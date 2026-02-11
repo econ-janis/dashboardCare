@@ -270,6 +270,12 @@ function monthLabel(m: string) {
   return `${n} ${y}`;
 }
 
+function toTitleCaseWords(s: string) {
+  return String(s || "")
+    .toLocaleLowerCase("es")
+    .replace(/\p{L}[\p{L}\p{N}'-]*/gu, (w) => w.charAt(0).toLocaleUpperCase("es") + w.slice(1));
+}
+
 function getField(row: Record<string, any>, candidates: string[]) {
   for (const c of candidates) {
     const v = row[c];
@@ -1108,15 +1114,22 @@ export default function JiraExecutiveDashboard() {
       rowsSubset.filter((r) => !closedStatuses.has(String(r.estado || "").trim().toLowerCase())).length;
 
     const backlogByStatus = (rowsSubset: Row[]) => {
-      const map = new Map<string, number>();
+      const map = new Map<string, { count: number; keys: string[] }>();
       rowsSubset.forEach((r) => {
         const statusRaw = String(r.estado || "").trim();
         const statusKey = statusRaw.toLowerCase();
         if (!statusRaw || closedStatuses.has(statusKey)) return;
-        map.set(statusRaw, (map.get(statusRaw) || 0) + 1);
+        const current = map.get(statusRaw) || { count: 0, keys: [] };
+        current.count += 1;
+        if (r.key) current.keys.push(r.key);
+        map.set(statusRaw, current);
       });
       return Array.from(map.entries())
-        .map(([status, count]) => ({ status, count }))
+        .map(([status, data]) => ({
+          status: toTitleCaseWords(status),
+          count: data.count,
+          keys: data.keys.sort((a, b) => a.localeCompare(b)),
+        }))
         .sort((a, b) => b.count - a.count || a.status.localeCompare(b.status));
     };
 
@@ -1762,6 +1775,11 @@ export default function JiraExecutiveDashboard() {
                           <div key={item.status} className="rounded-md border border-blue-100 bg-blue-50/60 px-3 py-2 text-sm">
                             <span className="font-medium text-slate-800">{item.status}</span>
                             <span className="ml-2 font-semibold text-[#0a2f6f]">{formatInt(item.count)}</span>
+                            {item.keys.length ? (
+                              <div className="mt-1 text-xs text-slate-600">
+                                <span className="font-semibold">Keys:</span> {item.keys.join(", ")}
+                              </div>
+                            ) : null}
                           </div>
                         ))}
                       </div>
