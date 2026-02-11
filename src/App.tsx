@@ -1658,46 +1658,26 @@ export default function JiraExecutiveDashboard() {
         <div className="mt-6">
           <Card className="rounded-xl border border-[#1e4b8f] bg-gradient-to-br from-[#001640] via-[#002862] to-[#0a3c86] text-white shadow-lg shadow-[#001640]/35">
             <CardHeader>
-              <CardTitle className="text-base font-semibold text-white">
-                Reporte Ejecutivo por Cliente (v1)
-              </CardTitle>
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <CardTitle className="text-base font-semibold text-white">
+                  Reporte Ejecutivo por Cliente (v1)
+                </CardTitle>
+                <Button
+                  className="self-start border border-orange-300/50 bg-gradient-to-r from-[#ff8f2b] to-[#ff7600] text-white shadow-sm shadow-[#ff7600]/40 hover:from-[#ff9c43] hover:to-[#ff8b1f]"
+                  disabled={!filtered.length}
+                  onClick={() => setShowExecutiveReport((prev) => !prev)}
+                >
+                  {showExecutiveReport ? "Ocultar Reporte Ejecutivo" : "Generar Reporte Ejecutivo"}
+                </Button>
+              </div>
               <p className="text-sm text-blue-100">
                 Enfoque en 4 bloques: Resumen Ejecutivo, Performance Operativa, Calidad/Impacto y Plan de Acción.
                 Vista simple, visual y comparativa vs mes anterior para decisiones rápidas.
               </p>
             </CardHeader>
             <CardContent>
-              <div className="mb-4 grid grid-cols-1 gap-3 text-sm text-blue-50 md:grid-cols-2">
-                <div className="rounded-lg border border-blue-300/30 bg-[#0b2c63]/70 p-3">
-                  <div className="mb-2 font-semibold text-white">1️⃣ Resumen Ejecutivo</div>
-                  <ul className="list-disc pl-5 space-y-1">
-                    <li>🎫 Tickets recibidos (vs mes anterior)</li>
-                    <li>✅ Tickets resueltos</li>
-                    <li>⏱️ SLA cumplimiento (%)</li>
-                    <li>🔴 Backlog al cierre</li>
-                  </ul>
-                </div>
-                <div className="rounded-lg border border-blue-300/30 bg-[#0b2c63]/70 p-3">
-                  <div className="mb-2 font-semibold text-white">2️⃣ 3️⃣ 4️⃣ Bloques complementarios</div>
-                  <ul className="list-disc pl-5 space-y-1">
-                    <li>Performance Operativa con foco en capacidad y cumplimiento.</li>
-                    <li>Calidad/Impacto para estabilidad y experiencia de cliente.</li>
-                    <li>Plan de Acción orientado a decisiones del siguiente mes.</li>
-                    <li>Incluye variación % MoM + 3 insights ejecutivos automáticos.</li>
-                  </ul>
-                </div>
-              </div>
-
-              <Button
-                className="border border-orange-300/50 bg-gradient-to-r from-[#ff8f2b] to-[#ff7600] text-white shadow-sm shadow-[#ff7600]/40 hover:from-[#ff9c43] hover:to-[#ff8b1f]"
-                disabled={!filtered.length}
-                onClick={() => setShowExecutiveReport((prev) => !prev)}
-              >
-                {showExecutiveReport ? "Ocultar Reporte Ejecutivo" : "Generar Reporte Ejecutivo"}
-              </Button>
-
               {showExecutiveReport ? (
-                <div className="mt-4 rounded-lg border border-blue-200/60 bg-white p-4 text-slate-900">
+                <div className="rounded-lg border border-blue-200/60 bg-white p-4 text-slate-900">
                   <div className="mb-3">
                     <div className="text-sm font-semibold text-[#0a2f6f]">1️⃣ Resumen Ejecutivo</div>
                     <div className="text-xs text-slate-600">
