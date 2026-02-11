@@ -1089,6 +1089,18 @@ export default function JiraExecutiveDashboard() {
       "completada",
     ]);
 
+    const canceledStatuses = new Set([
+      "cancelado",
+      "cancelada",
+      "cancelled",
+      "canceled",
+      "anulado",
+      "anulada",
+    ]);
+
+    const withoutCanceled = (rowsSubset: Row[]) =>
+      rowsSubset.filter((r) => !canceledStatuses.has(String(r.estado || "").trim().toLowerCase()));
+
     const resolvedCount = (rowsSubset: Row[]) =>
       rowsSubset.filter((r) => closedStatuses.has(String(r.estado || "").trim().toLowerCase())).length;
 
@@ -1108,15 +1120,20 @@ export default function JiraExecutiveDashboard() {
         .sort((a, b) => b.count - a.count || a.status.localeCompare(b.status));
     };
 
-    const ticketsCurrent = currentRows.length;
-    const ticketsPrev = previousRows.length;
-    const resolvedCurrent = resolvedCount(currentRows);
-    const resolvedPrev = resolvedCount(previousRows);
-    const slaCurrent = 100 - pct(currentRows.filter((r) => r.slaResponseStatus === "Incumplido").length, ticketsCurrent);
-    const slaPrev = 100 - pct(previousRows.filter((r) => r.slaResponseStatus === "Incumplido").length, ticketsPrev);
-    const backlogCurrent = backlogCount(currentRows);
-    const backlogPrev = backlogCount(previousRows);
-    const backlogStatusCurrent = backlogByStatus(currentRows);
+    const currentRowsNoCanceled = withoutCanceled(currentRows);
+    const previousRowsNoCanceled = withoutCanceled(previousRows);
+
+    const ticketsCurrent = currentRowsNoCanceled.length;
+    const ticketsPrev = previousRowsNoCanceled.length;
+    const resolvedCurrent = resolvedCount(currentRowsNoCanceled);
+    const resolvedPrev = resolvedCount(previousRowsNoCanceled);
+    const slaCurrent =
+      100 - pct(currentRowsNoCanceled.filter((r) => r.slaResponseStatus === "Incumplido").length, ticketsCurrent);
+    const slaPrev =
+      100 - pct(previousRowsNoCanceled.filter((r) => r.slaResponseStatus === "Incumplido").length, ticketsPrev);
+    const backlogCurrent = backlogCount(currentRowsNoCanceled);
+    const backlogPrev = backlogCount(previousRowsNoCanceled);
+    const backlogStatusCurrent = backlogByStatus(currentRowsNoCanceled);
 
     const metricStatus = (metric: string, value: number) => {
       if (!Number.isFinite(value)) return "neutral" as const;
