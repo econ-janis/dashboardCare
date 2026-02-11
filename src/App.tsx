@@ -1650,20 +1650,20 @@ export default function JiraExecutiveDashboard() {
         </div>
 
         <div className="mt-6">
-          <Card className="border border-fuchsia-200 bg-fuchsia-100 rounded-xl">
+          <Card className="rounded-xl border border-[#1e4b8f] bg-gradient-to-br from-[#001640] via-[#002862] to-[#0a3c86] text-white shadow-lg shadow-[#001640]/35">
             <CardHeader>
-              <CardTitle className="text-base font-semibold text-fuchsia-900">
+              <CardTitle className="text-base font-semibold text-white">
                 Reporte Ejecutivo por Cliente (v1)
               </CardTitle>
-              <p className="text-sm text-fuchsia-800">
+              <p className="text-sm text-blue-100">
                 Enfoque en 4 bloques: Resumen Ejecutivo, Performance Operativa, Calidad/Impacto y Plan de Acción.
                 Vista simple, visual y comparativa vs mes anterior para decisiones rápidas.
               </p>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-fuchsia-900 mb-4">
-                <div className="rounded-lg bg-white/80 border border-fuchsia-200 p-3">
-                  <div className="font-semibold mb-2">1️⃣ Resumen Ejecutivo</div>
+              <div className="mb-4 grid grid-cols-1 gap-3 text-sm text-blue-50 md:grid-cols-2">
+                <div className="rounded-lg border border-blue-300/30 bg-[#0b2c63]/70 p-3">
+                  <div className="mb-2 font-semibold text-white">1️⃣ Resumen Ejecutivo</div>
                   <ul className="list-disc pl-5 space-y-1">
                     <li>🎫 Tickets recibidos (vs mes anterior)</li>
                     <li>✅ Tickets resueltos</li>
@@ -1673,8 +1673,8 @@ export default function JiraExecutiveDashboard() {
                     <li>🔁 % Reaperturas</li>
                   </ul>
                 </div>
-                <div className="rounded-lg bg-white/80 border border-fuchsia-200 p-3">
-                  <div className="font-semibold mb-2">2️⃣ 3️⃣ 4️⃣ Bloques complementarios</div>
+                <div className="rounded-lg border border-blue-300/30 bg-[#0b2c63]/70 p-3">
+                  <div className="mb-2 font-semibold text-white">2️⃣ 3️⃣ 4️⃣ Bloques complementarios</div>
                   <ul className="list-disc pl-5 space-y-1">
                     <li>Performance Operativa con foco en capacidad y cumplimiento.</li>
                     <li>Calidad/Impacto para estabilidad y experiencia de cliente.</li>
@@ -1685,8 +1685,7 @@ export default function JiraExecutiveDashboard() {
               </div>
 
               <Button
-                className="text-white"
-                style={{ backgroundColor: "#be185d" }}
+                className="border border-orange-300/50 bg-gradient-to-r from-[#ff8f2b] to-[#ff7600] text-white shadow-sm shadow-[#ff7600]/40 hover:from-[#ff9c43] hover:to-[#ff8b1f]"
                 disabled={!filtered.length}
                 onClick={() => setShowExecutiveReport((prev) => !prev)}
               >
@@ -1694,9 +1693,9 @@ export default function JiraExecutiveDashboard() {
               </Button>
 
               {showExecutiveReport ? (
-                <div className="mt-4 rounded-lg border border-fuchsia-200 bg-white p-4">
+                <div className="mt-4 rounded-lg border border-blue-200/60 bg-white p-4 text-slate-900">
                   <div className="mb-3">
-                    <div className="text-sm font-semibold text-fuchsia-900">1️⃣ Resumen Ejecutivo</div>
+                    <div className="text-sm font-semibold text-[#0a2f6f]">1️⃣ Resumen Ejecutivo</div>
                     <div className="text-xs text-slate-600">
                       {executiveReportData.monthLabel} vs {executiveReportData.prevMonthLabel}
                     </div>
@@ -1719,35 +1718,35 @@ export default function JiraExecutiveDashboard() {
                           : `${metric.mom > 0 ? "+" : ""}${metric.mom.toFixed(1)}% vs mes anterior`;
 
                       return (
-                        <div key={metric.label} className="rounded-lg border border-fuchsia-100 bg-fuchsia-50 p-3">
-                          <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-slate-700">
+                        <div key={metric.label} className="rounded-lg border border-blue-100 bg-gradient-to-b from-blue-50 to-white p-3">
+                          <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-[#0a2f6f]">
                             <span className={`h-2.5 w-2.5 rounded-full ${dotColor}`} />
                             {metric.label}
                           </div>
                           <div className="text-xl font-semibold text-slate-900">{metric.value}</div>
-                          <div className="text-xs text-slate-500">{momLabel}</div>
+                          <div className="text-xs text-blue-700">{momLabel}</div>
                         </div>
                       );
                     })}
                   </div>
 
                   <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3 text-sm text-slate-700">
-                    <div className="rounded-lg border border-fuchsia-100 p-3">
-                      <div className="mb-1 font-semibold text-fuchsia-900">2️⃣ Performance Operativa</div>
+                    <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+                      <div className="mb-1 font-semibold text-[#0a2f6f]">2️⃣ Performance Operativa</div>
                       <p className="text-xs">Volumen, velocidad y cumplimiento SLA para decisiones de capacidad.</p>
                     </div>
-                    <div className="rounded-lg border border-fuchsia-100 p-3">
-                      <div className="mb-1 font-semibold text-fuchsia-900">3️⃣ Calidad / Impacto</div>
+                    <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+                      <div className="mb-1 font-semibold text-[#0a2f6f]">3️⃣ Calidad / Impacto</div>
                       <p className="text-xs">Seguimiento de reaperturas y estabilidad del servicio para reducir fricción.</p>
                     </div>
-                    <div className="rounded-lg border border-fuchsia-100 p-3">
-                      <div className="mb-1 font-semibold text-fuchsia-900">4️⃣ Plan de Acción</div>
+                    <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+                      <div className="mb-1 font-semibold text-[#0a2f6f]">4️⃣ Plan de Acción</div>
                       <p className="text-xs">Priorizar backlog, sostener SLA y ajustar capacidad del equipo.</p>
                     </div>
                   </div>
 
-                  <div className="mt-4 rounded-lg border border-fuchsia-100 bg-fuchsia-50 p-3">
-                    <div className="text-sm font-semibold text-fuchsia-900">Insights ejecutivos</div>
+                  <div className="mt-4 rounded-lg border border-[#ffb477]/70 bg-gradient-to-r from-[#fff7ef] to-white p-3">
+                    <div className="text-sm font-semibold text-[#c45d00]">Insights ejecutivos</div>
                     <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
                       {executiveReportData.insights.map((insight, idx) => (
                         <li key={idx}>{insight}</li>
