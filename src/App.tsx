@@ -1174,10 +1174,19 @@ export default function JiraExecutiveDashboard() {
 
       const ticketsMom = monthDeltaPct(ticketsCurrent, ticketsPrev);
       const backlogMom = monthDeltaPct(backlogCurrent, backlogPrev);
+
+      const momSummary = (v: number | null, up: string, down: string) => {
+        if (v == null) return "sin base comparativa";
+        if (Math.abs(v) < 0.05) return "sin variación";
+        if (v > 0) return `${up} ${v.toFixed(1)}%`;
+        return `${down} ${Math.abs(v).toFixed(1)}%`;
+      };
+
       return [
-        `Volumen de tickets ${ticketsMom == null ? "sin base comparativa" : ticketsMom >= 0 ? `al alza ${ticketsMom.toFixed(1)}%` : `a la baja ${Math.abs(ticketsMom).toFixed(1)}%`} en ${monthLabel(currentMonth)}.`,
+        `Volumen de tickets ${momSummary(ticketsMom, "al alza", "a la baja")} en ${monthLabel(currentMonth)}.`,
         `Cumplimiento SLA ${slaCurrent >= 95 ? "estable" : "en riesgo"} en ${slaCurrent.toFixed(1)}%, foco en continuidad operativa.`,
-        `Backlog ${backlogMom == null ? "sin comparativo" : backlogMom <= 0 ? `disminuye ${Math.abs(backlogMom).toFixed(1)}%` : `aumenta ${backlogMom.toFixed(1)}%`} y requiere foco por estado operativo.`,
+        `Backlog ${momSummary(backlogMom, "aumenta", "disminuye")} y requiere foco por estado operativo.`,
+        "Se concentran esfuerzos para entregar esos desarrollos dentro de la semana.",
       ];
     })();
 
