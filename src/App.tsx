@@ -675,6 +675,48 @@ export default function JiraExecutiveDashboard() {
   const [orgFilter, setOrgFilter] = useState("all");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [language, setLanguage] = useState<"es" | "pt">("es");
+
+  const executiveText =
+    language === "pt"
+      ? {
+          language: "Idioma",
+          generate: "Gerar Relatório Executivo",
+          hide: "Ocultar Relatório Executivo",
+          noComparison: "Sem comparativo",
+          executiveSummary: "Resumo Executivo",
+          resolvedBacklog: "Tickets resolvidos + Backlog no fechamento",
+          resolved: "Resolvidos",
+          backlog: "Backlog",
+          backlogByStatus: "Backlog no fechamento · Abertura por status",
+          noBacklog: "Sem backlog para o período selecionado.",
+          performance: "Performance Operacional",
+          quality: "Qualidade / Impacto",
+          actionPlan: "Plano de Ação",
+          performanceDesc: "Volume, velocidade e cumprimento de SLA para decisões de capacidade.",
+          qualityDesc: "Acompanhamento de reaberturas e estabilidade do serviço para reduzir atrito.",
+          actionDesc: "Priorizar backlog, sustentar SLA e ajustar a capacidade da equipe.",
+          insightsTitle: "Insights executivos",
+        }
+      : {
+          language: "Idioma",
+          generate: "Generar Reporte Ejecutivo",
+          hide: "Ocultar Reporte Ejecutivo",
+          noComparison: "Sin comparativo",
+          executiveSummary: "Resumen Ejecutivo",
+          resolvedBacklog: "Tickets resueltos + Backlog al cierre",
+          resolved: "Resueltos",
+          backlog: "Backlog",
+          backlogByStatus: "Backlog al cierre · Apertura por estados",
+          noBacklog: "Sin backlog para el período seleccionado.",
+          performance: "Performance Operativa",
+          quality: "Calidad / Impacto",
+          actionPlan: "Plan de Acción",
+          performanceDesc: "Volumen, velocidad y cumplimiento SLA para decisiones de capacidad.",
+          qualityDesc: "Seguimiento de reaperturas y estabilidad del servicio para reducir fricción.",
+          actionDesc: "Priorizar backlog, sostener SLA y ajustar capacidad del equipo.",
+          insightsTitle: "Insights ejecutivos",
+        };
 
   const onFile = (file: File) => {
     setError(null);
@@ -1165,29 +1207,42 @@ export default function JiraExecutiveDashboard() {
 
     const safeInsights = (() => {
       if (!currentMonth) {
-        return [
-          "No hay suficientes datos filtrados para construir insights del mes.",
-          "Carga un CSV y selecciona un cliente para ver comparativos mensuales.",
-          "La sección prioriza conclusiones para acelerar decisiones ejecutivas.",
-        ];
+        return language === "pt"
+          ? [
+              "Não há dados filtrados suficientes para gerar insights do mês.",
+              "Carregue um CSV e selecione um cliente para visualizar comparativos mensais.",
+              "A seção prioriza conclusões para acelerar decisões executivas.",
+            ]
+          : [
+              "No hay suficientes datos filtrados para construir insights del mes.",
+              "Carga un CSV y selecciona un cliente para ver comparativos mensuales.",
+              "La sección prioriza conclusiones para acelerar decisiones ejecutivas.",
+            ];
       }
 
       const ticketsMom = monthDeltaPct(ticketsCurrent, ticketsPrev);
       const backlogMom = monthDeltaPct(backlogCurrent, backlogPrev);
 
       const momSummary = (v: number | null, up: string, down: string) => {
-        if (v == null) return "sin base comparativa";
-        if (Math.abs(v) < 0.05) return "sin variación";
+        if (v == null) return language === "pt" ? "sem base comparativa" : "sin base comparativa";
+        if (Math.abs(v) < 0.05) return language === "pt" ? "sem variação" : "sin variación";
         if (v > 0) return `${up} ${v.toFixed(1)}%`;
         return `${down} ${Math.abs(v).toFixed(1)}%`;
       };
 
-      return [
-        `Volumen de tickets ${momSummary(ticketsMom, "al alza", "a la baja")} en ${monthLabel(currentMonth)}.`,
-        `Cumplimiento SLA ${slaCurrent >= 95 ? "estable" : "en riesgo"} en ${slaCurrent.toFixed(1)}%, foco en continuidad operativa.`,
-        `Backlog ${momSummary(backlogMom, "aumenta", "disminuye")} y requiere foco por estado operativo.`,
-        "Se concentran esfuerzos para entregar esos desarrollos dentro de la semana.",
-      ];
+      return language === "pt"
+        ? [
+            `Volume de tickets ${momSummary(ticketsMom, "em alta", "em baixa")} em ${monthLabel(currentMonth)}.`,
+            `Cumprimento de SLA ${slaCurrent >= 95 ? "estável" : "em risco"} em ${slaCurrent.toFixed(1)}%, com foco na continuidade operacional.`,
+            `Backlog ${momSummary(backlogMom, "aumenta", "diminui")} e exige foco por status operacional.`,
+            "Os esforços estão concentrados para entregar esses desenvolvimentos dentro da semana.",
+          ]
+        : [
+            `Volumen de tickets ${momSummary(ticketsMom, "al alza", "a la baja")} en ${monthLabel(currentMonth)}.`,
+            `Cumplimiento SLA ${slaCurrent >= 95 ? "estable" : "en riesgo"} en ${slaCurrent.toFixed(1)}%, foco en continuidad operativa.`,
+            `Backlog ${momSummary(backlogMom, "aumenta", "disminuye")} y requiere foco por estado operativo.`,
+            "Se concentran esfuerzos para entregar esos desarrollos dentro de la semana.",
+          ];
     })();
 
     return {
@@ -1224,7 +1279,7 @@ export default function JiraExecutiveDashboard() {
       backlogMom: monthDeltaPct(backlogCurrent, backlogPrev),
       insights: safeInsights,
     };
-  }, [filtered]);
+  }, [filtered, language]);
 
   const clearAll = () => {
     setRows([]);
@@ -1252,6 +1307,16 @@ export default function JiraExecutiveDashboard() {
           </div>
 
           <div className="flex flex-col sm:flex-row gap-2">
+            <Select value={language} onValueChange={(v: "es" | "pt") => setLanguage(v)}>
+              <SelectTrigger className="w-[150px] bg-white">
+                <SelectValue placeholder={executiveText.language} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="es">Español</SelectItem>
+                <SelectItem value="pt">Português</SelectItem>
+              </SelectContent>
+            </Select>
+
             <Input
               type="file"
               accept=".csv,text/csv"
@@ -1665,7 +1730,7 @@ export default function JiraExecutiveDashboard() {
         </div>
 
         <div className="mt-6">
-          <Card className="rounded-xl border border-[#1e4b8f] bg-gradient-to-br from-[#001640] via-[#002862] to-[#0a3c86] text-white shadow-lg shadow-[#001640]/35">
+          <Card className="rounded-xl border border-[#ff9f1a]/60 bg-gradient-to-br from-[#03133f] via-[#081d4d] to-[#1a2140] text-white shadow-lg shadow-[#020b26]/50">
             <CardHeader>
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <CardTitle className="text-base font-semibold text-white">
@@ -1676,20 +1741,20 @@ export default function JiraExecutiveDashboard() {
                   disabled={!filtered.length}
                   onClick={() => setShowExecutiveReport((prev) => !prev)}
                 >
-                  {showExecutiveReport ? "Ocultar Reporte Ejecutivo" : "Generar Reporte Ejecutivo"}
+                  {showExecutiveReport ? executiveText.hide : executiveText.generate}
                 </Button>
               </div>
-              <p className="text-sm text-blue-100">
+              <p className="text-sm text-slate-200">
                 Enfoque en 4 bloques: Resumen Ejecutivo, Performance Operativa, Calidad/Impacto y Plan de Acción.
                 Vista simple, visual y comparativa vs mes anterior para decisiones rápidas.
               </p>
             </CardHeader>
             <CardContent>
               {showExecutiveReport ? (
-                <div className="rounded-lg border border-blue-200/60 bg-white p-4 text-slate-900">
+                <div className="rounded-lg border border-[#ff9f1a]/55 bg-[#071a46]/80 p-4 text-slate-100">
                   <div className="mb-3">
-                    <div className="text-sm font-semibold text-[#0a2f6f]">1️⃣ Resumen Ejecutivo</div>
-                    <div className="text-xs text-slate-600">
+                    <div className="text-sm font-semibold text-white">1️⃣ Resumen Ejecutivo</div>
+                    <div className="text-xs text-slate-300">
                       {executiveReportData.monthLabel} vs {executiveReportData.prevMonthLabel}
                     </div>
                   </div>
@@ -1709,45 +1774,45 @@ export default function JiraExecutiveDashboard() {
 
                       const momLabel =
                         metric.mom == null
-                          ? "Sin comparativo"
+                          ? executiveText.noComparison
                           : `${metric.mom > 0 ? "+" : ""}${metric.mom.toFixed(1)}% vs mes anterior`;
 
                       return (
-                        <div key={metric.label} className="rounded-lg border border-blue-100 bg-gradient-to-b from-blue-50 to-white p-3">
-                          <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-[#0a2f6f]">
+                        <div key={metric.label} className="rounded-lg border border-[#ff9f1a] bg-[#071a46] p-3">
+                          <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-slate-100">
                             <span className={`h-2.5 w-2.5 rounded-full ${dotColor}`} />
                             {metric.label}
                           </div>
-                          <div className="text-xl font-semibold text-slate-900">{metric.value}</div>
-                          <div className="text-xs text-blue-700">{momLabel}</div>
+                          <div className="text-xl font-semibold text-[#39d5c8]">{metric.value}</div>
+                          <div className="text-xs text-slate-300">{momLabel}</div>
                         </div>
                       );
                       })}
 
-                    <div className="rounded-lg border-2 border-red-500 bg-gradient-to-b from-blue-50 to-white p-3 md:col-span-2 xl:col-span-1">
-                      <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-[#0a2f6f]">
+                    <div className="rounded-lg border-2 border-[#ff9f1a] bg-[#071a46] p-3 md:col-span-2 xl:col-span-1">
+                      <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-slate-100">
                         <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                        ✅ Tickets resueltos + 🔴 Backlog al cierre
+                        ✅ {executiveText.resolvedBacklog}
                       </div>
-                      <div className="space-y-1 text-xs text-slate-700">
+                      <div className="space-y-1 text-xs text-slate-200">
                         <div>
-                          <span className="font-semibold text-slate-900">Resueltos:</span>{" "}
+                          <span className="font-semibold text-slate-100">{executiveText.resolved}:</span>{" "}
                           {executiveReportData.metrics.find((m) => m.label.includes("resueltos"))?.value || "0"}
-                          <span className="ml-2 text-blue-700">
+                          <span className="ml-2 text-slate-300">
                             {(() => {
                               const mom = executiveReportData.resolvedMom;
-                              if (mom == null) return "Sin comparativo";
+                              if (mom == null) return executiveText.noComparison;
                               return `${mom > 0 ? "+" : ""}${mom.toFixed(1)}% vs mes anterior`;
                             })()}
                           </span>
                         </div>
                         <div>
-                          <span className="font-semibold text-slate-900">Backlog:</span>{" "}
+                          <span className="font-semibold text-slate-100">{executiveText.backlog}:</span>{" "}
                           {executiveReportData.metrics.find((m) => m.label.includes("Backlog"))?.value || "0"}
-                          <span className="ml-2 text-blue-700">
+                          <span className="ml-2 text-slate-300">
                             {(() => {
                               const mom = executiveReportData.backlogMom;
-                              if (mom == null) return "Sin comparativo";
+                              if (mom == null) return executiveText.noComparison;
                               return `${mom > 0 ? "+" : ""}${mom.toFixed(1)}% vs mes anterior`;
                             })()}
                           </span>
@@ -1756,16 +1821,16 @@ export default function JiraExecutiveDashboard() {
                     </div>
                   </div>
 
-                  <div className="mt-4 rounded-lg border border-blue-100 bg-white p-3">
-                    <div className="mb-2 text-sm font-semibold text-[#0a2f6f]">Backlog al cierre · Apertura por estados</div>
+                  <div className="mt-4 rounded-lg border border-[#2f4f84] bg-[#071a46]/90 p-3">
+                    <div className="mb-2 text-sm font-semibold text-slate-100">{executiveText.backlogByStatus}</div>
                     {executiveReportData.backlogByStatus.length ? (
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                         {executiveReportData.backlogByStatus.map((item) => (
-                          <div key={item.status} className="rounded-md border border-blue-100 bg-blue-50/60 px-3 py-2 text-sm">
-                            <span className="font-medium text-slate-800">{item.status}</span>
-                            <span className="ml-2 font-semibold text-[#0a2f6f]">{formatInt(item.count)}</span>
+                          <div key={item.status} className="rounded-md border border-[#2f4f84] bg-[#0d2558] px-3 py-2 text-sm">
+                            <span className="font-medium text-slate-100">{item.status}</span>
+                            <span className="ml-2 font-semibold text-[#39d5c8]">{formatInt(item.count)}</span>
                             {item.keys.length ? (
-                              <div className="mt-1 text-xs text-slate-600">
+                              <div className="mt-1 text-xs text-slate-300">
                                 <span className="font-semibold">Keys:</span> {item.keys.join(", ")}
                               </div>
                             ) : null}
@@ -1773,28 +1838,28 @@ export default function JiraExecutiveDashboard() {
                         ))}
                       </div>
                     ) : (
-                      <p className="text-xs text-slate-600">Sin backlog para el período seleccionado.</p>
+                      <p className="text-xs text-slate-300">{executiveText.noBacklog}</p>
                     )}
                   </div>
 
-                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3 text-sm text-slate-700">
-                    <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-3">
-                      <div className="mb-1 font-semibold text-[#0a2f6f]">2️⃣ Performance Operativa</div>
-                      <p className="text-xs">Volumen, velocidad y cumplimiento SLA para decisiones de capacidad.</p>
+                  <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-slate-200 md:grid-cols-3">
+                    <div className="rounded-lg border border-[#2f4f84] bg-[#0d2558] p-3">
+                      <div className="mb-1 font-semibold text-slate-100">2️⃣ {executiveText.performance}</div>
+                      <p className="text-xs">{executiveText.performanceDesc}</p>
                     </div>
-                    <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-3">
-                      <div className="mb-1 font-semibold text-[#0a2f6f]">3️⃣ Calidad / Impacto</div>
-                      <p className="text-xs">Seguimiento de reaperturas y estabilidad del servicio para reducir fricción.</p>
+                    <div className="rounded-lg border border-[#2f4f84] bg-[#0d2558] p-3">
+                      <div className="mb-1 font-semibold text-slate-100">3️⃣ {executiveText.quality}</div>
+                      <p className="text-xs">{executiveText.qualityDesc}</p>
                     </div>
-                    <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-3">
-                      <div className="mb-1 font-semibold text-[#0a2f6f]">4️⃣ Plan de Acción</div>
-                      <p className="text-xs">Priorizar backlog, sostener SLA y ajustar capacidad del equipo.</p>
+                    <div className="rounded-lg border border-[#2f4f84] bg-[#0d2558] p-3">
+                      <div className="mb-1 font-semibold text-slate-100">4️⃣ {executiveText.actionPlan}</div>
+                      <p className="text-xs">{executiveText.actionDesc}</p>
                     </div>
                   </div>
 
-                  <div className="mt-4 rounded-lg border border-[#ffb477]/70 bg-gradient-to-r from-[#fff7ef] to-white p-3">
-                    <div className="text-sm font-semibold text-[#c45d00]">Insights ejecutivos</div>
-                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
+                  <div className="mt-4 rounded-lg border border-[#ff9f1a] bg-[#0d2558] p-3">
+                    <div className="text-sm font-semibold text-[#ff9f1a]">{executiveText.insightsTitle}</div>
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-200">
                       {executiveReportData.insights.map((insight, idx) => (
                         <li key={idx}>{insight}</li>
                       ))}
