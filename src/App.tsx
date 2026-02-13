@@ -226,6 +226,11 @@ function formatPct(n: any) {
   return `${val.toFixed(2)}%`;
 }
 
+function monthDeltaPct(current: number, previous: number) {
+  if (!Number.isFinite(previous) || previous === 0) return null;
+  return ((current - previous) / previous) * 100;
+}
+
 function formatDateCLShort(d: Date) {
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -263,6 +268,12 @@ function monthLabel(m: string) {
   const idx = Number(mm) - 1;
   const n = idx >= 0 && idx < 12 ? names[idx] : mm;
   return `${n} ${y}`;
+}
+
+function toTitleCaseWords(s: string) {
+  return String(s || "")
+    .toLocaleLowerCase("es")
+    .replace(/\p{L}[\p{L}\p{N}'-]*/gu, (w) => w.charAt(0).toLocaleUpperCase("es") + w.slice(1));
 }
 
 function getField(row: Record<string, any>, candidates: string[]) {
@@ -408,39 +419,20 @@ function buildExecutiveReportHtml(args: {
     status: string;
   };
   autoRange: { minMonth: string | null; maxMonth: string | null };
-  kpis: {
-    total: number;
-    latestMonth: string | null;
-    monthCount: number;
-    respInc: number;
-    respOkPct: number;
-    csatAvg: number | null;
-    csatCoverage: number;
-    tpp6m: number | null;
-    tppHealth: { label: string };
-  };
-  series: {
-    ticketsByMonth: Array<{ month: string; tickets: number }>;
-    ticketsByYear: Array<{ year: string; tickets: number }>;
-    slaByYear: Array<{
-      year: string;
-      Cumplido: number;
-      Incumplido: number;
-      CumplidoPct: number;
-      IncumplidoPct: number;
+  executive: {
+    monthLabel: string;
+    prevMonthLabel: string;
+    insights: string[];
+    metrics: Array<{
+      label: string;
+      value: string;
+      mom: number | null;
+      status: "good" | "warn" | "bad" | "neutral";
     }>;
-    csatByYear: Array<{ year: string; csatAvg: number | null; responses: number }>;
-    topAssignees: Array<{ name: string; tickets: number }>;
-    topOrgsPie: Array<{ name: string; tickets: number }>;
-    heatMap: { states: string[]; rows: any[]; range: string };
-    hourHeatMap: { data: Array<{ hour: number; tickets: number }>; max: number };
-    weekHeatMap: { days: string[]; matrix: any[]; max: number };
   };
 }) {
-  const { title, generatedAt, filters, autoRange, kpis, series } = args;
+  const { title, generatedAt, filters, autoRange, executive } = args;
   const f = (v: any) => escapeHtml(v);
-  const fmtInt = (n: any) => new Intl.NumberFormat("es-CL").format(Number(n) || 0);
-  const fmtPct = (n: any) => `${(Number(n) || 0).toFixed(2)}%`;
 
   const gen = generatedAt;
   const genStr = `${gen.getFullYear()}-${String(gen.getMonth() + 1).padStart(2, "0")}-${String(
@@ -457,99 +449,13 @@ function buildExecutiveReportHtml(args: {
     `Estado: ${f(filters.status)}`,
   ].join(" • ");
 
-  const kpiRows = [
-    { label: "Tickets (vista)", value: fmtInt(kpis.total) },
-    {
-      label: "Tickets último mes (vista)",
-      value: `${fmtInt(kpis.monthCount)}${kpis.latestMonth ? ` (${f(kpis.latestMonth)})` : ""}`,
-    },
-    { label: "Cumplimiento SLA Response", value: fmtPct(kpis.respOkPct) },
-    {
-      label: "Incumplidos SLA Response",
-      value: `${fmtInt(kpis.respInc)} (${fmtPct(
-        kpis.total ? (kpis.respInc / kpis.total) * 100 : 0
-      )})`,
-    },
-    { label: "CSAT promedio", value: kpis.csatAvg == null ? "—" : String(kpis.csatAvg.toFixed(2)) },
-    { label: "Cobertura CSAT", value: fmtPct(kpis.csatCoverage) },
-    {
-      label: "Tickets / Persona (prom. 6 meses)",
-      value: kpis.tpp6m == null ? "—" : `${kpis.tpp6m.toFixed(1)} (${f(kpis.tppHealth.label)})`,
-    },
-  ];
-
-  const table = (headers: string[], rows: Array<Array<any>>) => {
-    const th = headers.map((h) => `<th>${f(h)}</th>`).join("");
-    const tr = rows
-      .map((r) => `<tr>${r.map((c) => `<td>${f(c)}</td>`).join("")}</tr>`)
-      .join("");
-    return `<table><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table>`;
+  const momText = (v: number | null) => {
+    if (v == null || !Number.isFinite(v)) return "Sin comparativo";
+    const sign = v > 0 ? "+" : "";
+    return `${sign}${v.toFixed(1)}% vs mes anterior`;
   };
 
-  const ticketsByMonthTable = table(
-    ["Mes", "Tickets"],
-    series.ticketsByMonth.map((x) => [monthLabel(x.month), fmtInt(x.tickets)])
-  );
-  const ticketsByYearTable = table(
-    ["Año", "Tickets"],
-    series.ticketsByYear.map((x) => [x.year, fmtInt(x.tickets)])
-  );
-
-  const slaByYearTable = table(
-    ["Año", "Cumplido", "Incumplido", "Cumplido %", "Incumplido %"],
-    series.slaByYear.map((x) => [
-      x.year,
-      fmtInt(x.Cumplido),
-      fmtInt(x.Incumplido),
-      fmtPct(x.CumplidoPct),
-      fmtPct(x.IncumplidoPct),
-    ])
-  );
-
-  const csatByYearTable = table(
-    ["Año", "CSAT prom.", "Respuestas"],
-    series.csatByYear.map((x) => [
-      x.year,
-      x.csatAvg == null ? "—" : x.csatAvg.toFixed(2),
-      fmtInt(x.responses),
-    ])
-  );
-
-  const topAssigneesTable = table(
-    ["Asignado", "Tickets"],
-    series.topAssignees.map((x) => [x.name, fmtInt(x.tickets)])
-  );
-
-  const topOrgsTable = table(
-    ["Organización", "Tickets", "%"],
-    (() => {
-      const total = series.topOrgsPie.reduce((s, x) => s + (Number(x.tickets) || 0), 0);
-      return series.topOrgsPie.map((x) => [
-        x.name,
-        fmtInt(x.tickets),
-        fmtPct(total ? (x.tickets / total) * 100 : 0),
-      ]);
-    })()
-  );
-
-  const heatHeaders = ["Mes", ...series.heatMap.states];
-  const heatRows = series.heatMap.rows.map((r) => [
-    monthLabel(r.month),
-    ...series.heatMap.states.map((s) => fmtInt(r[s] || 0)),
-  ]);
-  const heatMonthTable = table(heatHeaders, heatRows);
-
-  const hourTable = table(
-    ["Hora", "Tickets"],
-    series.hourHeatMap.data.map((x) => [`${String(x.hour).padStart(2, "0")}:00`, fmtInt(x.tickets)])
-  );
-
-  const weekHeaders = ["Hora", ...series.weekHeatMap.days];
-  const weekRows = series.weekHeatMap.matrix.map((row) => [
-    `${String(row.hour).padStart(2, "0")}:00`,
-    ...series.weekHeatMap.days.map((d) => fmtInt(row[d] || 0)),
-  ]);
-  const weekTable = table(weekHeaders, weekRows);
+  const statusClass = (s: "good" | "warn" | "bad" | "neutral") => `dot ${s}`;
 
   const css = `
   @page { size: A4; margin: 12mm; }
@@ -559,20 +465,24 @@ function buildExecutiveReportHtml(args: {
     background-color: white; 
   }
   h1 { font-size: 20px; color: #0f172a; margin-bottom: 4px; }
-  .meta { font-size: 10px; color: #64748b; margin-bottom: 20px; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px; }
-  
-  /* KPIs: Evita que el texto se amontone */
-  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
-  .kpi { border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; background: #ffffff; }
-  .kpi .label { font-size: 9px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 6px; display: block; }
-  .kpi .value { font-size: 16px; font-weight: 700; color: #2563eb; } /* Azul Janis */
-  
-  /* Tablas con diseño moderno */
-  table { width: 100%; border-collapse: collapse; font-size: 9px; margin-bottom: 15px; }
-  th { background: #f8fafc; color: #475569; font-weight: 700; text-align: left; padding: 6px 8px; border: 1px solid #e2e8f0; }
-  td { padding: 6px 8px; border: 1px solid #e2e8f0; color: #334155; }
-  
-  .badge { padding: 2px 6px; border-radius: 4px; background: #dbeafe; color: #1e40af; font-weight: 700; font-size: 9px; }
+  h2 { font-size: 14px; color: #be185d; margin-bottom: 8px; margin-top: 0; }
+  .meta { font-size: 10px; color: #64748b; margin-bottom: 14px; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px; }
+  .badge { padding: 2px 6px; border-radius: 4px; background: #fce7f3; color: #9d174d; font-weight: 700; font-size: 9px; }
+  .block { border: 1px solid #f5d0fe; border-radius: 10px; padding: 12px; margin-bottom: 12px; background: #fdf2f8; }
+  .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .kpi { background: #fff; border: 1px solid #fbcfe8; border-radius: 8px; padding: 8px; }
+  .kpi .head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .dot { width: 10px; height: 10px; border-radius: 9999px; display:inline-block; }
+  .dot.good { background:#16a34a; }
+  .dot.warn { background:#f59e0b; }
+  .dot.bad { background:#dc2626; }
+  .dot.neutral { background:#64748b; }
+  .kpi .label { font-size: 9px; font-weight: 700; color: #475569; text-transform: uppercase; }
+  .kpi .value { font-size: 15px; font-weight: 700; color: #0f172a; }
+  .kpi .mom { font-size: 10px; color: #64748b; }
+  ul { margin: 6px 0 0 18px; padding: 0; }
+  li { margin: 5px 0; font-size: 11px; }
+  .subtle { font-size: 10px; color: #64748b; }
 `;
   
   
@@ -591,71 +501,45 @@ function buildExecutiveReportHtml(args: {
         <div style="margin-top:6px;">${filterLine}</div>
       </div>
 
-      <div class="section">
-        <h2>KPIs</h2>
-        <div class="kpis">
-          ${kpiRows
+      <div class="block">
+        <h2>1. Resumen Ejecutivo</h2>
+        <div class="subtle">Período actual: ${f(executive.monthLabel)} · comparado con ${f(
+    executive.prevMonthLabel
+  )}</div>
+        <div class="kpi-grid" style="margin-top:8px;">
+          ${executive.metrics
             .map(
-              (k) =>
-                `<div class="kpi"><div class="label">${f(k.label)}</div><div class="value">${f(
-                  k.value
-                )}</div></div>`
+              (k) => `<div class="kpi">
+                <div class="head"><span class="${statusClass(k.status)}"></span><span class="label">${f(
+                k.label
+              )}</span></div>
+                <div class="value">${f(k.value)}</div>
+                <div class="mom">${f(momText(k.mom))}</div>
+              </div>`
             )
             .join("")}
         </div>
-        <div class="note">Regla SLA Response (Time to first response): Cumplido si valor &gt;= 0 o vacío; Incumplido solo si valor &lt; 0.</div>
+        <ul>${executive.insights.map((i) => `<li>${f(i)}</li>`).join("")}</ul>
       </div>
 
-      <div class="section twoCol">
-        <div>
-          <h2>Tickets por Mes</h2>
-          ${ticketsByMonthTable}
-        </div>
-        <div>
-          <h2>Tickets por Año</h2>
-          ${ticketsByYearTable}
-        </div>
+      <div class="block">
+        <h2>2. Performance Operativa</h2>
+        <div class="subtle">Lectura rápida de volumen, velocidad de resolución y cumplimiento SLA para decisiones operativas.</div>
       </div>
 
-      <div class="section twoCol">
-        <div>
-          <h2>SLA Response por Año</h2>
-          ${slaByYearTable}
-        </div>
-        <div>
-          <h2>CSAT promedio por Año</h2>
-          ${csatByYearTable}
-        </div>
+      <div class="block">
+        <h2>3. Calidad / Impacto</h2>
+        <div class="subtle">Seguimiento de reaperturas, estabilidad de servicio y señales de riesgo para la experiencia del cliente.</div>
       </div>
 
-      <div class="section twoCol">
-        <div>
-          <h2>Top 10 Asignados</h2>
-          ${topAssigneesTable}
-        </div>
-        <div>
-          <h2>Top 5 Organizaciones + Otros</h2>
-          ${topOrgsTable}
-        </div>
+      <div class="block">
+        <h2>4. Plan de Acción</h2>
+        <ul>
+          <li>Priorizar focos de backlog y reaperturas con objetivos de reducción para el próximo mes.</li>
+          <li>Definir acciones concretas para sostener (o recuperar) el cumplimiento SLA.</li>
+          <li>Alinear capacidad del equipo según el comportamiento de demanda observado.</li>
+        </ul>
       </div>
-
-      <div class="section">
-        <h2>Heatmap Mes vs Estado (últimos 6 meses)</h2>
-        ${heatMonthTable}
-      </div>
-
-      <div class="section twoCol">
-        <div>
-          <h2>Heatmap Horario (por hora)</h2>
-          ${hourTable}
-        </div>
-        <div>
-          <h2>Heatmap Semana (día vs hora)</h2>
-          ${weekTable}
-        </div>
-      </div>
-
-      <div class="note">Sugerencia: aplica enfoque Pareto 80/20 sobre Top Organizaciones/Asignados para reducir demanda recurrente.</div>
     </body>
   </html>`;
 }
@@ -663,7 +547,7 @@ function buildExecutiveReportHtml(args: {
 function kpiCard(
   title: string,
   value: any,
-  subtitle?: string,
+  subtitle?: React.ReactNode,
   right?: string,
   badge?: React.ReactNode
 ) {
@@ -763,6 +647,7 @@ type Row = {
   organization: string;
   estado: string;
   asignado: string;
+  linkedKeys: string[];
   creada: Date;
   year: number;
   month: string;
@@ -777,6 +662,7 @@ export default function JiraExecutiveDashboard() {
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [showExecutiveReport, setShowExecutiveReport] = useState(false);
 
   // Filters: rango por mes (YYYY-MM)
   const [fromMonth, setFromMonth] = useState<string>("all");
@@ -790,6 +676,48 @@ export default function JiraExecutiveDashboard() {
   const [orgFilter, setOrgFilter] = useState("all");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [language, setLanguage] = useState<"es" | "pt">("es");
+
+  const executiveText =
+    language === "pt"
+      ? {
+          language: "Idioma",
+          generate: "Gerar Relatório Executivo",
+          hide: "Ocultar Relatório Executivo",
+          noComparison: "Sem comparativo",
+          executiveSummary: "Resumo Executivo",
+          resolvedBacklog: "Tickets resolvidos + Backlog no fechamento",
+          resolved: "Resolvidos",
+          backlog: "Backlog",
+          backlogByStatus: "Backlog no fechamento · Abertura por status",
+          noBacklog: "Sem backlog para o período selecionado.",
+          performance: "Performance Operacional",
+          quality: "Qualidade / Impacto",
+          actionPlan: "Plano de Ação",
+          performanceDesc: "Volume, velocidade e cumprimento de SLA para decisões de capacidade.",
+          qualityDesc: "Acompanhamento de reaberturas e estabilidade do serviço para reduzir atrito.",
+          actionDesc: "Priorizar backlog, sustentar SLA e ajustar a capacidade da equipe.",
+          insightsTitle: "Insights executivos",
+        }
+      : {
+          language: "Idioma",
+          generate: "Generar Reporte Ejecutivo",
+          hide: "Ocultar Reporte Ejecutivo",
+          noComparison: "Sin comparativo",
+          executiveSummary: "Resumen Ejecutivo",
+          resolvedBacklog: "Tickets resueltos + Backlog al cierre",
+          resolved: "Resueltos",
+          backlog: "Backlog",
+          backlogByStatus: "Backlog al cierre · Apertura por estados",
+          noBacklog: "Sin backlog para el período seleccionado.",
+          performance: "Performance Operativa",
+          quality: "Calidad / Impacto",
+          actionPlan: "Plan de Acción",
+          performanceDesc: "Volumen, velocidad y cumplimiento SLA para decisiones de capacidad.",
+          qualityDesc: "Seguimiento de reaperturas y estabilidad del servicio para reducir fricción.",
+          actionDesc: "Priorizar backlog, sostener SLA y ajustar capacidad del equipo.",
+          insightsTitle: "Insights ejecutivos",
+        };
 
   const onFile = (file: File) => {
     setError(null);
@@ -851,11 +779,34 @@ export default function JiraExecutiveDashboard() {
             // Excluir Block/Hold
             if (/\b(block|hold)\b/i.test(estado)) continue;
 
+            const linkedColumns = Object.keys(r).filter((k) => {
+              const key = String(k || "").toLowerCase();
+              return (
+                key.includes("actividades vinculadas") ||
+                key.includes("actividad vinculada") ||
+                key.includes("linked activit") ||
+                key.includes("enlace a la incidencia") ||
+                key.includes("enlace de incidencia")
+              );
+            });
+
+            const linkedMatches = linkedColumns.flatMap((col) => {
+              const raw = String(coalesce(r[col], "")).trim();
+              if (!raw) return [] as string[];
+              const matches = raw.match(/\bHDI-\d+\b/gi);
+              return matches ? matches : [];
+            });
+
+            const linkedKeys = Array.from(
+              new Set(linkedMatches.map((x) => String(x).toUpperCase().trim()).filter(Boolean))
+            );
+
             parsed.push({
               key: String(coalesce(r["clave de incidencia"], coalesce(r["key"], ""))).trim(),
               organization: org,
               estado,
               asignado: String(coalesce(r["persona asignada"], "")).trim(),
+              linkedKeys,
               creada,
               year: creada.getFullYear(),
               month: ym(creada),
@@ -932,8 +883,29 @@ export default function JiraExecutiveDashboard() {
         ? rated.reduce((s, r) => s + (r.satisfaction == null ? 0 : r.satisfaction), 0) / rated.length
         : null;
 
-    const latestMonth = total > 0 ? filtered[total - 1].month : null;
-    const monthCount = latestMonth ? filtered.filter((r) => r.month === latestMonth).length : 0;
+    const isNormalSchedule = (d: Date) => {
+      const day = d.getDay(); // 0=dom, 6=sáb
+      const hour = d.getHours();
+      const isWeekday = day >= 1 && day <= 5;
+      return isWeekday && hour >= 6 && hour < 23;
+    };
+
+    const totalNormal = filtered.filter((r) => isNormalSchedule(r.creada)).length;
+    const totalGuard = total - totalNormal;
+
+    const firstSeenByLinkedKey = new Map<string, Date>();
+    filtered.forEach((r) => {
+      (r.linkedKeys || []).forEach((k) => {
+        if (!firstSeenByLinkedKey.has(k)) firstSeenByLinkedKey.set(k, r.creada);
+      });
+    });
+
+    const uniqueLinkedKeys = Array.from(firstSeenByLinkedKey.keys());
+    const linkedNormal = uniqueLinkedKeys.filter((k) => {
+      const d = firstSeenByLinkedKey.get(k);
+      return d ? isNormalSchedule(d) : false;
+    }).length;
+    const linkedGuard = uniqueLinkedKeys.length - linkedNormal;
 
     // Tickets/Persona: Promedio últimos 6 meses (sin considerar mes actual si no está cerrado)
     const monthsSorted = Array.from(new Set(filtered.map((r) => r.month))).sort();
@@ -976,8 +948,11 @@ export default function JiraExecutiveDashboard() {
 
     return {
       total,
-      latestMonth,
-      monthCount,
+      totalNormal,
+      totalGuard,
+      linkedTickets: uniqueLinkedKeys.length,
+      linkedNormal,
+      linkedGuard,
       respInc,
       respOkPct: 100 - pct(respInc, total),
       csatAvg,
@@ -1190,6 +1165,170 @@ export default function JiraExecutiveDashboard() {
     return max;
   }, [series.heatMap]);
 
+  const executiveReportData = useMemo(() => {
+    const monthsSorted = Array.from(new Set(filtered.map((r) => r.month))).sort();
+    const currentMonth = monthsSorted.length ? monthsSorted[monthsSorted.length - 1] : null;
+    const previousMonth = monthsSorted.length > 1 ? monthsSorted[monthsSorted.length - 2] : null;
+
+    const currentRows = currentMonth ? filtered.filter((r) => r.month === currentMonth) : [];
+    const previousRows = previousMonth ? filtered.filter((r) => r.month === previousMonth) : [];
+
+    const closedStatuses = new Set([
+      "done",
+      "closed",
+      "resuelto",
+      "resuelta",
+      "solucionado",
+      "solucionada",
+      "resuelto/a",
+      "completado",
+      "completada",
+    ]);
+
+    const canceledStatuses = new Set([
+      "cancelado",
+      "cancelada",
+      "cancelled",
+      "canceled",
+      "anulado",
+      "anulada",
+    ]);
+
+    const withoutCanceled = (rowsSubset: Row[]) =>
+      rowsSubset.filter((r) => !canceledStatuses.has(String(r.estado || "").trim().toLowerCase()));
+
+    const resolvedCount = (rowsSubset: Row[]) =>
+      rowsSubset.filter((r) => closedStatuses.has(String(r.estado || "").trim().toLowerCase())).length;
+
+    const backlogCount = (rowsSubset: Row[]) =>
+      rowsSubset.filter((r) => !closedStatuses.has(String(r.estado || "").trim().toLowerCase())).length;
+
+    const backlogByStatus = (rowsSubset: Row[]) => {
+      const map = new Map<string, { count: number; keys: string[] }>();
+      rowsSubset.forEach((r) => {
+        const statusRaw = String(r.estado || "").trim();
+        const statusKey = statusRaw.toLowerCase();
+        if (!statusRaw || closedStatuses.has(statusKey)) return;
+        const current = map.get(statusRaw) || { count: 0, keys: [] };
+        current.count += 1;
+        if (r.key) current.keys.push(r.key);
+        map.set(statusRaw, current);
+      });
+      return Array.from(map.entries())
+        .map(([status, data]) => ({
+          status: toTitleCaseWords(status),
+          count: data.count,
+          keys: data.keys.sort((a, b) => a.localeCompare(b)),
+        }))
+        .sort((a, b) => b.count - a.count || a.status.localeCompare(b.status));
+    };
+
+    const currentRowsNoCanceled = withoutCanceled(currentRows);
+    const previousRowsNoCanceled = withoutCanceled(previousRows);
+
+    const ticketsCurrent = currentRowsNoCanceled.length;
+    const ticketsPrev = previousRowsNoCanceled.length;
+    const resolvedCurrent = resolvedCount(currentRowsNoCanceled);
+    const resolvedPrev = resolvedCount(previousRowsNoCanceled);
+    const slaCurrent =
+      100 - pct(currentRowsNoCanceled.filter((r) => r.slaResponseStatus === "Incumplido").length, ticketsCurrent);
+    const slaPrev =
+      100 - pct(previousRowsNoCanceled.filter((r) => r.slaResponseStatus === "Incumplido").length, ticketsPrev);
+    const backlogCurrent = backlogCount(currentRowsNoCanceled);
+    const backlogPrev = backlogCount(previousRowsNoCanceled);
+    const backlogStatusCurrent = backlogByStatus(currentRowsNoCanceled);
+
+    const metricStatus = (metric: string, value: number) => {
+      if (!Number.isFinite(value)) return "neutral" as const;
+      if (metric === "sla") {
+        if (value >= 95) return "good" as const;
+        if (value >= 90) return "warn" as const;
+        return "bad" as const;
+      }
+      if (metric === "backlog") {
+        if (value <= 25) return "good" as const;
+        if (value <= 60) return "warn" as const;
+        return "bad" as const;
+      }
+      return "neutral" as const;
+    };
+
+    const safeInsights = (() => {
+      if (!currentMonth) {
+        return language === "pt"
+          ? [
+              "Não há dados filtrados suficientes para gerar insights do mês.",
+              "Carregue um CSV e selecione um cliente para visualizar comparativos mensais.",
+              "A seção prioriza conclusões para acelerar decisões executivas.",
+            ]
+          : [
+              "No hay suficientes datos filtrados para construir insights del mes.",
+              "Carga un CSV y selecciona un cliente para ver comparativos mensuales.",
+              "La sección prioriza conclusiones para acelerar decisiones ejecutivas.",
+            ];
+      }
+
+      const ticketsMom = monthDeltaPct(ticketsCurrent, ticketsPrev);
+      const backlogMom = monthDeltaPct(backlogCurrent, backlogPrev);
+
+      const momSummary = (v: number | null, up: string, down: string) => {
+        if (v == null) return language === "pt" ? "sem base comparativa" : "sin base comparativa";
+        if (Math.abs(v) < 0.05) return language === "pt" ? "sem variação" : "sin variación";
+        if (v > 0) return `${up} ${v.toFixed(1)}%`;
+        return `${down} ${Math.abs(v).toFixed(1)}%`;
+      };
+
+      return language === "pt"
+        ? [
+            `Volume de tickets ${momSummary(ticketsMom, "em alta", "em baixa")} em ${monthLabel(currentMonth)}.`,
+            `Cumprimento de SLA ${slaCurrent >= 95 ? "estável" : "em risco"} em ${slaCurrent.toFixed(1)}%, com foco na continuidade operacional.`,
+            `Backlog ${momSummary(backlogMom, "aumenta", "diminui")} e exige foco por status operacional.`,
+            "Os esforços estão concentrados para entregar esses desenvolvimentos dentro da semana.",
+          ]
+        : [
+            `Volumen de tickets ${momSummary(ticketsMom, "al alza", "a la baja")} en ${monthLabel(currentMonth)}.`,
+            `Cumplimiento SLA ${slaCurrent >= 95 ? "estable" : "en riesgo"} en ${slaCurrent.toFixed(1)}%, foco en continuidad operativa.`,
+            `Backlog ${momSummary(backlogMom, "aumenta", "disminuye")} y requiere foco por estado operativo.`,
+            "Se concentran esfuerzos para entregar esos desarrollos dentro de la semana.",
+          ];
+    })();
+
+    return {
+      monthLabel: currentMonth ? monthLabel(currentMonth) : "Sin datos",
+      prevMonthLabel: previousMonth ? monthLabel(previousMonth) : "Sin mes anterior",
+      metrics: [
+        {
+          label: "🎫 Tickets recibidos",
+          value: formatInt(ticketsCurrent),
+          mom: monthDeltaPct(ticketsCurrent, ticketsPrev),
+          status: "neutral" as const,
+        },
+        {
+          label: "✅ Tickets resueltos",
+          value: formatInt(resolvedCurrent),
+          mom: monthDeltaPct(resolvedCurrent, resolvedPrev),
+          status: "neutral" as const,
+        },
+        {
+          label: "⏱️ SLA cumplimiento",
+          value: formatPct(slaCurrent),
+          mom: monthDeltaPct(slaCurrent, slaPrev),
+          status: metricStatus("sla", slaCurrent),
+        },
+        {
+          label: "🔴 Backlog al cierre",
+          value: formatInt(backlogCurrent),
+          mom: monthDeltaPct(backlogCurrent, backlogPrev),
+          status: metricStatus("backlog", backlogCurrent),
+        },
+      ],
+      backlogByStatus: backlogStatusCurrent,
+      resolvedMom: monthDeltaPct(resolvedCurrent, resolvedPrev),
+      backlogMom: monthDeltaPct(backlogCurrent, backlogPrev),
+      insights: safeInsights,
+    };
+  }, [filtered, language]);
+
   const clearAll = () => {
     setRows([]);
     setError(null);
@@ -1216,6 +1355,16 @@ export default function JiraExecutiveDashboard() {
           </div>
 
           <div className="flex flex-col sm:flex-row gap-2">
+            <Select value={language} onValueChange={(v: "es" | "pt") => setLanguage(v)}>
+              <SelectTrigger className="w-[150px] bg-white">
+                <SelectValue placeholder={executiveText.language} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="es">Español</SelectItem>
+                <SelectItem value="pt">Português</SelectItem>
+              </SelectContent>
+            </Select>
+
             <Input
               type="file"
               accept=".csv,text/csv"
@@ -1248,7 +1397,6 @@ export default function JiraExecutiveDashboard() {
                   const filename = `Informe_Ejecutivo_Janis_Care_${y}${m}${d}.pdf`;
 
                   const html = buildExecutiveReportHtml({
-				  
                     title: "Janis Commerce -  Care Executive Dashboard",
                     generatedAt: now,
                     filters: {
@@ -1259,20 +1407,8 @@ export default function JiraExecutiveDashboard() {
                       status: statusFilter === "all" ? "Todos" : statusFilter,
                     },
                     autoRange,
-                    kpis: {
-                      total: kpis.total,
-                      latestMonth: kpis.latestMonth,
-                      monthCount: kpis.monthCount,
-                      respInc: kpis.respInc,
-                      respOkPct: kpis.respOkPct,
-                      csatAvg: kpis.csatAvg,
-                      csatCoverage: kpis.csatCoverage,
-                      tpp6m: kpis.tpp6m,
-                      tppHealth: { label: kpis.tppHealth.label },
-                    },
-                    series,
-                  }
-				  );
+                    executive: executiveReportData,
+                  });
 
                   await exportExecutivePdfDirect({ html, filename });
                   setError(null);
@@ -1287,7 +1423,7 @@ export default function JiraExecutiveDashboard() {
                 }
               }}
             >
-              {exporting ? "Exportando…" : "Exportar Informe"}
+              {exporting ? "Exportando…" : "Exportar Informe (General)"}
             </Button>
 
             <Button variant="outline" onClick={clearAll}>
@@ -1389,11 +1525,21 @@ export default function JiraExecutiveDashboard() {
 
         {/* KPIs */}
         <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-5">
-          {kpiCard("Tickets (vista)", formatInt(kpis.total))}
           {kpiCard(
-            "Tickets último mes (vista)",
-            formatInt(kpis.monthCount),
-            kpis.latestMonth ? monthLabel(kpis.latestMonth) : "—"
+            "Tickets (vista)",
+            formatInt(kpis.total),
+            <>
+              <div>Horario Normal: {formatInt(kpis.totalNormal)}</div>
+              <div>Horario Guardia: {formatInt(kpis.totalGuard)}</div>
+            </>
+          )}
+          {kpiCard(
+            "HDI Vinculados",
+            formatInt(kpis.linkedTickets),
+            <>
+              <div>Horario Normal: {formatInt(kpis.linkedNormal)}</div>
+              <div>Horario Guardia: {formatInt(kpis.linkedGuard)}</div>
+            </>
           )}
           {kpiCard(
             "Cumplimiento SLA Response",
@@ -1639,6 +1785,148 @@ export default function JiraExecutiveDashboard() {
 
         <div className="mt-6 text-xs text-slate-500">
           Sugerencia: aplica enfoque Pareto 80/20 sobre Top Organizaciones/Asignados para reducir demanda recurrente.
+        </div>
+
+        <div className="mt-6">
+          <Card className="rounded-xl border border-[#ff9f1a]/60 bg-gradient-to-br from-[#03133f] via-[#081d4d] to-[#1a2140] text-white shadow-lg shadow-[#020b26]/50">
+            <CardHeader>
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <CardTitle className="text-base font-semibold text-white">
+                  Reporte Ejecutivo por Cliente (v1)
+                </CardTitle>
+                <Button
+                  className="self-start border border-orange-300/50 bg-gradient-to-r from-[#ff8f2b] to-[#ff7600] text-white shadow-sm shadow-[#ff7600]/40 hover:from-[#ff9c43] hover:to-[#ff8b1f]"
+                  disabled={!filtered.length}
+                  onClick={() => setShowExecutiveReport((prev) => !prev)}
+                >
+                  {showExecutiveReport ? executiveText.hide : executiveText.generate}
+                </Button>
+              </div>
+              <p className="text-sm text-slate-200">
+                Enfoque en 4 bloques: Resumen Ejecutivo, Performance Operativa, Calidad/Impacto y Plan de Acción.
+                Vista simple, visual y comparativa vs mes anterior para decisiones rápidas.
+              </p>
+            </CardHeader>
+            <CardContent>
+              {showExecutiveReport ? (
+                <div className="rounded-lg border border-[#ff9f1a]/55 bg-[#071a46]/80 p-4 text-slate-100">
+                  <div className="mb-3">
+                    <div className="text-sm font-semibold text-white">1️⃣ Resumen Ejecutivo</div>
+                    <div className="text-xs text-slate-300">
+                      {executiveReportData.monthLabel} vs {executiveReportData.prevMonthLabel}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {executiveReportData.metrics
+                      .filter((metric) => !metric.label.includes("resueltos") && !metric.label.includes("Backlog"))
+                      .map((metric) => {
+                      const dotColor =
+                        metric.status === "good"
+                          ? "bg-emerald-500"
+                          : metric.status === "warn"
+                            ? "bg-amber-500"
+                            : metric.status === "bad"
+                              ? "bg-red-500"
+                              : "bg-slate-400";
+
+                      const momLabel =
+                        metric.mom == null
+                          ? executiveText.noComparison
+                          : `${metric.mom > 0 ? "+" : ""}${metric.mom.toFixed(1)}% vs mes anterior`;
+
+                      return (
+                        <div key={metric.label} className="rounded-lg border border-[#ff9f1a] bg-[#071a46] p-3">
+                          <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-slate-100">
+                            <span className={`h-2.5 w-2.5 rounded-full ${dotColor}`} />
+                            {metric.label}
+                          </div>
+                          <div className="text-xl font-semibold text-[#39d5c8]">{metric.value}</div>
+                          <div className="text-xs text-slate-300">{momLabel}</div>
+                        </div>
+                      );
+                      })}
+
+                    <div className="rounded-lg border-2 border-[#ff9f1a] bg-[#071a46] p-3 md:col-span-2 xl:col-span-1">
+                      <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-slate-100">
+                        <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                        ✅ {executiveText.resolvedBacklog}
+                      </div>
+                      <div className="space-y-1 text-xs text-slate-200">
+                        <div>
+                          <span className="font-semibold text-slate-100">{executiveText.resolved}:</span>{" "}
+                          {executiveReportData.metrics.find((m) => m.label.includes("resueltos"))?.value || "0"}
+                          <span className="ml-2 text-slate-300">
+                            {(() => {
+                              const mom = executiveReportData.resolvedMom;
+                              if (mom == null) return executiveText.noComparison;
+                              return `${mom > 0 ? "+" : ""}${mom.toFixed(1)}% vs mes anterior`;
+                            })()}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-slate-100">{executiveText.backlog}:</span>{" "}
+                          {executiveReportData.metrics.find((m) => m.label.includes("Backlog"))?.value || "0"}
+                          <span className="ml-2 text-slate-300">
+                            {(() => {
+                              const mom = executiveReportData.backlogMom;
+                              if (mom == null) return executiveText.noComparison;
+                              return `${mom > 0 ? "+" : ""}${mom.toFixed(1)}% vs mes anterior`;
+                            })()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-lg border border-[#2f4f84] bg-[#071a46]/90 p-3">
+                    <div className="mb-2 text-sm font-semibold text-slate-100">{executiveText.backlogByStatus}</div>
+                    {executiveReportData.backlogByStatus.length ? (
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {executiveReportData.backlogByStatus.map((item) => (
+                          <div key={item.status} className="rounded-md border border-[#2f4f84] bg-[#0d2558] px-3 py-2 text-sm">
+                            <span className="font-medium text-slate-100">{item.status}</span>
+                            <span className="ml-2 font-semibold text-[#39d5c8]">{formatInt(item.count)}</span>
+                            {item.keys.length ? (
+                              <div className="mt-1 text-xs text-slate-300">
+                                <span className="font-semibold">Keys:</span> {item.keys.join(", ")}
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-300">{executiveText.noBacklog}</p>
+                    )}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-slate-200 md:grid-cols-3">
+                    <div className="rounded-lg border border-[#2f4f84] bg-[#0d2558] p-3">
+                      <div className="mb-1 font-semibold text-slate-100">2️⃣ {executiveText.performance}</div>
+                      <p className="text-xs">{executiveText.performanceDesc}</p>
+                    </div>
+                    <div className="rounded-lg border border-[#2f4f84] bg-[#0d2558] p-3">
+                      <div className="mb-1 font-semibold text-slate-100">3️⃣ {executiveText.quality}</div>
+                      <p className="text-xs">{executiveText.qualityDesc}</p>
+                    </div>
+                    <div className="rounded-lg border border-[#2f4f84] bg-[#0d2558] p-3">
+                      <div className="mb-1 font-semibold text-slate-100">4️⃣ {executiveText.actionPlan}</div>
+                      <p className="text-xs">{executiveText.actionDesc}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-lg border border-[#ff9f1a] bg-[#0d2558] p-3">
+                    <div className="text-sm font-semibold text-[#ff9f1a]">{executiveText.insightsTitle}</div>
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-200">
+                      {executiveReportData.insights.map((insight, idx) => (
+                        <li key={idx}>{insight}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>
