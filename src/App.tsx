@@ -647,7 +647,7 @@ type Row = {
   organization: string;
   estado: string;
   asignado: string;
-  linkedActivities: string;
+  linkedCount: number;
   creada: Date;
   year: number;
   month: string;
@@ -779,24 +779,31 @@ export default function JiraExecutiveDashboard() {
             // Excluir Block/Hold
             if (/\b(block|hold)\b/i.test(estado)) continue;
 
-            const linkedActivities = String(
-              coalesce(
-                getField(r, [
-                  "actividades vinculadas",
-                  "actividad vinculada",
-                  "linked activities",
-                  "linked activity",
-                ]),
-                ""
-              )
-            ).trim();
+            const linkedColumns = Object.keys(r).filter((k) => {
+              const key = String(k || "").toLowerCase();
+              return (
+                key.includes("actividades vinculadas") ||
+                key.includes("actividad vinculada") ||
+                key.includes("linked activit") ||
+                key.includes("enlace a la incidencia") ||
+                key.includes("enlace de incidencia")
+              );
+            });
+
+            const linkedCount = linkedColumns.reduce((acc, col) => {
+              const raw = String(coalesce(r[col], "")).trim();
+              if (!raw) return acc;
+              const matches = raw.match(/\b[A-Z]{2,}-\d+\b/gi);
+              if (matches && matches.length) return acc + matches.length;
+              return acc + 1;
+            }, 0);
 
             parsed.push({
               key: String(coalesce(r["clave de incidencia"], coalesce(r["key"], ""))).trim(),
               organization: org,
               estado,
               asignado: String(coalesce(r["persona asignada"], "")).trim(),
-              linkedActivities,
+              linkedCount,
               creada,
               year: creada.getFullYear(),
               month: ym(creada),
@@ -873,10 +880,7 @@ export default function JiraExecutiveDashboard() {
         ? rated.reduce((s, r) => s + (r.satisfaction == null ? 0 : r.satisfaction), 0) / rated.length
         : null;
 
-    const linkedTickets = filtered.reduce((acc, r) => {
-      const matches = String(r.linkedActivities || "").match(/\bHDI(?:[-\s]?[A-Z0-9]+)\b/gi);
-      return acc + (matches ? matches.length : 0);
-    }, 0);
+    const linkedTickets = filtered.reduce((acc, r) => acc + (Number(r.linkedCount) || 0), 0);
 
     // Tickets/Persona: Promedio últimos 6 meses (sin considerar mes actual si no está cerrado)
     const monthsSorted = Array.from(new Set(filtered.map((r) => r.month))).sort();
@@ -1496,7 +1500,7 @@ export default function JiraExecutiveDashboard() {
           {kpiCard(
             "Cantidad de Tickets Vinculados",
             formatInt(kpis.linkedTickets),
-            "Conteo de HDI en Actividades Vinculadas"
+            "Conteo de enlaces vinculados en columnas de enlace"
           )}
           {kpiCard(
             "Cumplimiento SLA Response",
