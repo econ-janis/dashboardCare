@@ -547,7 +547,7 @@ function buildExecutiveReportHtml(args: {
 function kpiCard(
   title: string,
   value: any,
-  subtitle?: string,
+  subtitle?: React.ReactNode,
   right?: string,
   badge?: React.ReactNode
 ) {
@@ -1528,12 +1528,18 @@ export default function JiraExecutiveDashboard() {
           {kpiCard(
             "Tickets (vista)",
             formatInt(kpis.total),
-            `Horario Normal: ${formatInt(kpis.totalNormal)} · Horario Guardia: ${formatInt(kpis.totalGuard)}`
+            <>
+              <div>Horario Normal: {formatInt(kpis.totalNormal)}</div>
+              <div>Horario Guardia: {formatInt(kpis.totalGuard)}</div>
+            </>
           )}
           {kpiCard(
             "HDI Vinculados",
             formatInt(kpis.linkedTickets),
-            `Horario Normal: ${formatInt(kpis.linkedNormal)} · Horario Guardia: ${formatInt(kpis.linkedGuard)}`
+            <>
+              <div>Horario Normal: {formatInt(kpis.linkedNormal)}</div>
+              <div>Horario Guardia: {formatInt(kpis.linkedGuard)}</div>
+            </>
           )}
           {kpiCard(
             "Cumplimiento SLA Response",
