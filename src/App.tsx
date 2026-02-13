@@ -890,6 +890,9 @@ export default function JiraExecutiveDashboard() {
       return isWeekday && hour >= 6 && hour < 23;
     };
 
+    const totalNormal = filtered.filter((r) => isNormalSchedule(r.creada)).length;
+    const totalGuard = total - totalNormal;
+
     const firstSeenByLinkedKey = new Map<string, Date>();
     filtered.forEach((r) => {
       (r.linkedKeys || []).forEach((k) => {
@@ -945,6 +948,8 @@ export default function JiraExecutiveDashboard() {
 
     return {
       total,
+      totalNormal,
+      totalGuard,
       linkedTickets: uniqueLinkedKeys.length,
       linkedNormal,
       linkedGuard,
@@ -1520,7 +1525,11 @@ export default function JiraExecutiveDashboard() {
 
         {/* KPIs */}
         <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-5">
-          {kpiCard("Tickets (vista)", formatInt(kpis.total))}
+          {kpiCard(
+            "Tickets (vista)",
+            formatInt(kpis.total),
+            `Horario Normal: ${formatInt(kpis.totalNormal)} · Horario Guardia: ${formatInt(kpis.totalGuard)}`
+          )}
           {kpiCard(
             "HDI Vinculados",
             formatInt(kpis.linkedTickets),
