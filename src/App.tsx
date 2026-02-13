@@ -793,7 +793,7 @@ export default function JiraExecutiveDashboard() {
             const linkedMatches = linkedColumns.flatMap((col) => {
               const raw = String(coalesce(r[col], "")).trim();
               if (!raw) return [] as string[];
-              const matches = raw.match(/\b[A-Z]{2,}-\d+\b/gi);
+              const matches = raw.match(/\bHDI-\d+\b/gi);
               return matches ? matches : [];
             });
 
@@ -883,20 +883,26 @@ export default function JiraExecutiveDashboard() {
         ? rated.reduce((s, r) => s + (r.satisfaction == null ? 0 : r.satisfaction), 0) / rated.length
         : null;
 
-    const uniqueLinkedKeys = Array.from(
-      new Set(filtered.flatMap((r) => (Array.isArray(r.linkedKeys) ? r.linkedKeys : [])))
-    );
+    const isNormalSchedule = (d: Date) => {
+      const day = d.getDay(); // 0=dom, 6=sáb
+      const hour = d.getHours();
+      const isWeekday = day >= 1 && day <= 5;
+      return isWeekday && hour >= 6 && hour < 23;
+    };
 
-    const linkedByType = uniqueLinkedKeys.reduce((acc, key) => {
-      const type = String(key).split("-")[0] || "OTR";
-      acc[type] = (acc[type] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+    const firstSeenByLinkedKey = new Map<string, Date>();
+    filtered.forEach((r) => {
+      (r.linkedKeys || []).forEach((k) => {
+        if (!firstSeenByLinkedKey.has(k)) firstSeenByLinkedKey.set(k, r.creada);
+      });
+    });
 
-    const linkedTypeSummary = Object.entries(linkedByType)
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([type, count]) => `${type} = ${formatInt(count)}`)
-      .join(" · ");
+    const uniqueLinkedKeys = Array.from(firstSeenByLinkedKey.keys());
+    const linkedNormal = uniqueLinkedKeys.filter((k) => {
+      const d = firstSeenByLinkedKey.get(k);
+      return d ? isNormalSchedule(d) : false;
+    }).length;
+    const linkedGuard = uniqueLinkedKeys.length - linkedNormal;
 
     // Tickets/Persona: Promedio últimos 6 meses (sin considerar mes actual si no está cerrado)
     const monthsSorted = Array.from(new Set(filtered.map((r) => r.month))).sort();
@@ -940,7 +946,8 @@ export default function JiraExecutiveDashboard() {
     return {
       total,
       linkedTickets: uniqueLinkedKeys.length,
-      linkedTypeSummary,
+      linkedNormal,
+      linkedGuard,
       respInc,
       respOkPct: 100 - pct(respInc, total),
       csatAvg,
@@ -1515,9 +1522,9 @@ export default function JiraExecutiveDashboard() {
         <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-5">
           {kpiCard("Tickets (vista)", formatInt(kpis.total))}
           {kpiCard(
-            "Cantidad de Tickets Vinculados",
+            "HDI Vinculados",
             formatInt(kpis.linkedTickets),
-            kpis.linkedTypeSummary || "Sin tickets vinculados en el período"
+            `Horario Normal: ${formatInt(kpis.linkedNormal)} · Horario Guardia: ${formatInt(kpis.linkedGuard)}`
           )}
           {kpiCard(
             "Cumplimiento SLA Response",
