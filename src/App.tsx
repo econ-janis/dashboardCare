@@ -656,11 +656,29 @@ type Row = {
   satisfaction: number | null;
 };
 
+type JanisRow = {
+  clientCode: string;
+  month: string; // YYYY-MM
+  year: number;
+  totalOrders: number;
+};
+
+function normalizeOrgKey(value: string) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
 export default function JiraExecutiveDashboard() {
   if (typeof window !== "undefined") runParserTestsOnce();
   const jiraFileInputRef = useRef<HTMLInputElement | null>(null);
+  const janisFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [rows, setRows] = useState<Row[]>([]);
+  const [janisRows, setJanisRows] = useState<JanisRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [showExecutiveReport, setShowExecutiveReport] = useState(false);
@@ -849,13 +867,64 @@ export default function JiraExecutiveDashboard() {
     });
   };
 
+  const onJanisFile = (file: File) => {
+    setError(null);
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (res: any) => {
+        try {
+          const parsed: JanisRow[] = [];
+          for (const raw of res.data || []) {
+            const clientCode = String(coalesce(raw?.clientCode, "")).trim();
+            const monthNum = Number(String(coalesce(raw?.month, "")).trim());
+            const yearNum = Number(String(coalesce(raw?.year, "")).trim());
+            const totalOrdersNum = Number(String(coalesce(raw?.totalOrders, "")).trim());
+
+            if (!clientCode || !Number.isFinite(monthNum) || !Number.isFinite(yearNum) || !Number.isFinite(totalOrdersNum)) {
+              continue;
+            }
+            if (monthNum < 1 || monthNum > 12) continue;
+
+            const month = `${yearNum}-${String(monthNum).padStart(2, "0")}`;
+            parsed.push({
+              clientCode,
+              month,
+              year: yearNum,
+              totalOrders: totalOrdersNum,
+            });
+          }
+
+          setJanisRows(parsed);
+          if (!rows.length && parsed.length) {
+            const months = Array.from(new Set(parsed.map((r) => r.month))).sort();
+            const minMonth = months[0];
+            const maxMonth = months[months.length - 1];
+            setAutoRange({ minMonth, maxMonth });
+            setFromMonth(minMonth);
+            setToMonth(maxMonth);
+          }
+        } catch (e: any) {
+          setError((e && e.message) || "Error procesando Janis Data");
+          setJanisRows([]);
+        }
+      },
+      error: (err: any) => {
+        setError(err.message);
+        setJanisRows([]);
+      },
+    });
+  };
+
   const filterOptions = useMemo(() => {
-    const orgs = Array.from(new Set(rows.map((r) => r.organization).filter(Boolean))).sort();
+    const orgs = Array.from(
+      new Set([...rows.map((r) => r.organization), ...janisRows.map((r) => r.clientCode)].filter(Boolean))
+    ).sort();
     const assignees = Array.from(new Set(rows.map((r) => r.asignado).filter(Boolean))).sort();
     const estados = Array.from(new Set(rows.map((r) => r.estado).filter(Boolean))).sort();
-    const months = Array.from(new Set(rows.map((r) => r.month))).sort();
+    const months = Array.from(new Set([...rows.map((r) => r.month), ...janisRows.map((r) => r.month)])).sort();
     return { orgs, assignees, estados, months };
-  }, [rows]);
+  }, [rows, janisRows]);
 
   const minMonthBound =
     autoRange.minMonth ?? (filterOptions.months.length ? filterOptions.months[0] : undefined);
@@ -863,16 +932,51 @@ export default function JiraExecutiveDashboard() {
     autoRange.maxMonth ??
     (filterOptions.months.length ? filterOptions.months[filterOptions.months.length - 1] : undefined);
 
+  const overlapRange = useMemo(() => {
+    if (!rows.length || !janisRows.length) return null;
+    const jiraMonths = Array.from(new Set(rows.map((r) => r.month))).sort();
+    const janisMonths = Array.from(new Set(janisRows.map((r) => r.month))).sort();
+    if (!jiraMonths.length || !janisMonths.length) return null;
+    const start = jiraMonths[0] > janisMonths[0] ? jiraMonths[0] : janisMonths[0];
+    const end =
+      jiraMonths[jiraMonths.length - 1] < janisMonths[janisMonths.length - 1]
+        ? jiraMonths[jiraMonths.length - 1]
+        : janisMonths[janisMonths.length - 1];
+    if (start > end) return { start: "9999-99", end: "0000-00" };
+    return { start, end };
+  }, [rows, janisRows]);
+
+  const orgMatches = (candidate: string) =>
+    orgFilter === "all" || normalizeOrgKey(candidate) === normalizeOrgKey(orgFilter);
+
   const filtered = useMemo(() => {
     return rows.filter((r) => {
       if (fromMonth !== "all" && r.month < fromMonth) return false;
       if (toMonth !== "all" && r.month > toMonth) return false;
-      if (orgFilter !== "all" && r.organization !== orgFilter) return false;
+      if (overlapRange && (r.month < overlapRange.start || r.month > overlapRange.end)) return false;
+      if (!orgMatches(r.organization)) return false;
       if (assigneeFilter !== "all" && r.asignado !== assigneeFilter) return false;
       if (statusFilter !== "all" && r.estado !== statusFilter) return false;
       return true;
     });
-  }, [rows, fromMonth, toMonth, orgFilter, assigneeFilter, statusFilter]);
+  }, [rows, fromMonth, toMonth, overlapRange, assigneeFilter, statusFilter, orgFilter]);
+
+  const janisFiltered = useMemo(() => {
+    return janisRows.filter((r) => {
+      if (fromMonth !== "all" && r.month < fromMonth) return false;
+      if (toMonth !== "all" && r.month > toMonth) return false;
+      if (overlapRange && (r.month < overlapRange.start || r.month > overlapRange.end)) return false;
+      if (!orgMatches(r.clientCode)) return false;
+      return true;
+    });
+  }, [janisRows, fromMonth, toMonth, overlapRange, orgFilter]);
+
+  const janisKpis = useMemo(() => {
+    const totalOrders = janisFiltered.reduce((acc, row) => acc + row.totalOrders, 0);
+    return {
+      totalOrders,
+    };
+  }, [janisFiltered]);
 
   const kpis = useMemo(() => {
     const total = filtered.length;
@@ -1332,6 +1436,7 @@ export default function JiraExecutiveDashboard() {
 
   const clearAll = () => {
     setRows([]);
+    setJanisRows([]);
     setError(null);
     setFromMonth("all");
     setToMonth("all");
@@ -1386,7 +1491,23 @@ export default function JiraExecutiveDashboard() {
               Jira Data
             </Button>
 
-            <Button variant="outline" onClick={() => {}}>
+            <input
+              ref={janisFileInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files && e.target.files[0];
+                if (f) onJanisFile(f);
+              }}
+            />
+
+            <Button
+              variant="outline"
+              onClick={() => {
+                janisFileInputRef.current?.click();
+              }}
+            >
               Janis Data
             </Button>
 
@@ -1574,6 +1695,18 @@ export default function JiraExecutiveDashboard() {
             undefined,
             <HealthBadge label={kpis.tppHealth.label} color={kpis.tppHealth.color} />
           )}
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-5">
+          {kpiCard(
+            "Total Órdenes (Janis Data)",
+            formatInt(janisKpis.totalOrders),
+            "Filtrado por fecha y organización"
+          )}
+          {kpiCard("Janis Card 2", "—", "Próximamente")}
+          {kpiCard("Janis Card 3", "—", "Próximamente")}
+          {kpiCard("Janis Card 4", "—", "Próximamente")}
+          {kpiCard("Janis Card 5", "—", "Próximamente")}
         </div>
 
         {/* Charts */}
