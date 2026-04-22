@@ -739,6 +739,48 @@ function buildTicketsPer1kByMonth(monthRows: Array<{ month: string; tickets: num
     .filter(Boolean) as Array<{ month: string; ticketsPer1k: number }>;
 }
 
+function buildTicketsPer1kInsight(points: Array<{ month: string; ticketsPer1k: number }>) {
+  if (!points || points.length < 3) return null;
+
+  const values = points.map((p) => Number(p.ticketsPer1k) || 0);
+  const n = values.length;
+  const half = Math.floor(n / 2);
+  const avg = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+  const firstAvg = avg(values.slice(0, half));
+  const secondAvg = avg(values.slice(half));
+  const deltaPct = firstAvg > 0 ? (secondAvg - firstAvg) / firstAvg : 0;
+
+  let maxIdx = 0;
+  let minIdx = 0;
+  for (let i = 1; i < n; i++) {
+    if (values[i] > values[maxIdx]) maxIdx = i;
+    if (values[i] < values[minIdx]) minIdx = i;
+  }
+
+  const last3 = values.slice(-3);
+  const last3Up = last3[0] < last3[1] && last3[1] < last3[2];
+  const last3Down = last3[0] > last3[1] && last3[1] > last3[2];
+  const peakDropPct = values[maxIdx] > 0 ? (values[maxIdx] - values[n - 1]) / values[maxIdx] : 0;
+
+  if (maxIdx < n - 1 && peakDropPct >= 0.2) {
+    return `Peak de fricción en ${monthLabel(points[maxIdx].month)} y recuperación clara hacia ${monthLabel(points[n - 1].month)}.`;
+  }
+  if (deltaPct >= 0.12 && last3Up) {
+    return "El ratio muestra deterioro progresivo; la fricción sube de forma sostenida.";
+  }
+  if (deltaPct <= -0.12 && last3Down) {
+    return "Mejora operativa sostenida: el ratio cae de forma consistente en el período.";
+  }
+
+  const range = values[maxIdx] - values[minIdx];
+  const base = avg(values) || 1;
+  if (Math.abs(deltaPct) <= 0.08 && range / base <= 0.2) {
+    return "Comportamiento estable, con variaciones moderadas en el período seleccionado.";
+  }
+
+  return "Sin tendencia clara en el período seleccionado.";
+}
+
 export default function JiraExecutiveDashboard() {
   if (typeof window !== "undefined") runParserTestsOnce();
   const jiraFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1344,6 +1386,10 @@ export default function JiraExecutiveDashboard() {
     () => buildTicketsPer1kByMonth(series.ticketsVsOrdersByMonth || []),
     [series.ticketsVsOrdersByMonth]
   );
+  const ticketsPer1kInsight = useMemo(
+    () => buildTicketsPer1kInsight(ticketsPer1kTrend),
+    [ticketsPer1kTrend]
+  );
 
   const estadoKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -1901,6 +1947,9 @@ export default function JiraExecutiveDashboard() {
           <Card className={UI.card + " mt-3"}>
             <CardHeader>
               <CardTitle className={UI.title}>Evolución Tickets por 1.000 órdenes</CardTitle>
+              {ticketsPer1kInsight ? (
+                <p className={"mt-1 " + UI.subtle}>{ticketsPer1kInsight}</p>
+              ) : null}
             </CardHeader>
             <CardContent className="h-64">
               <ResponsiveContainer width="100%" height="100%">
