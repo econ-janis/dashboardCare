@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import {
   LineChart,
@@ -658,6 +658,7 @@ type Row = {
 
 export default function JiraExecutiveDashboard() {
   if (typeof window !== "undefined") runParserTestsOnce();
+  const jiraFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -1365,14 +1366,29 @@ export default function JiraExecutiveDashboard() {
               </SelectContent>
             </Select>
 
-            <Input
+            <input
+              ref={jiraFileInputRef}
               type="file"
               accept=".csv,text/csv"
+              className="hidden"
               onChange={(e) => {
                 const f = e.target.files && e.target.files[0];
                 if (f) onFile(f);
               }}
             />
+
+            <Button
+              variant="outline"
+              onClick={() => {
+                jiraFileInputRef.current?.click();
+              }}
+            >
+              Jira Data
+            </Button>
+
+            <Button variant="outline" onClick={() => {}}>
+              Janis Data
+            </Button>
 
             <Button
               className="text-white"
@@ -1423,11 +1439,11 @@ export default function JiraExecutiveDashboard() {
                 }
               }}
             >
-              {exporting ? "Exportando…" : "Exportar Informe (General)"}
+              {exporting ? "Exporting…" : "Export"}
             </Button>
 
             <Button variant="outline" onClick={clearAll}>
-              Limpiar
+              Clean
             </Button>
           </div>
         </div>
