@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import {
   LineChart,
@@ -586,9 +586,11 @@ function HealthBadge({ label, color }: { label: string; color: string }) {
 function YearBars({
   rows,
   maxTickets,
+  maxOrders,
 }: {
-  rows: Array<{ year: string; tickets: number; partialLabel: string }>;
+  rows: Array<{ year: string; tickets: number; orders: number; partialLabel: string }>;
   maxTickets: number;
+  maxOrders: number;
 }) {
   return (
     <div className="space-y-3">
@@ -596,20 +598,36 @@ function YearBars({
         const pctW = maxTickets
           ? Math.max(0, Math.min(100, (r.tickets / maxTickets) * 100))
           : 0;
+        const pctOrders = maxOrders ? Math.max(0, Math.min(100, (r.orders / maxOrders) * 100)) : 0;
         return (
           <div key={r.year} className="flex items-center gap-3">
             <div className="w-12 text-sm text-slate-700 font-semibold">{r.year}</div>
             <div className="flex-1">
-              <div className="h-3 rounded-full bg-slate-100 overflow-hidden">
+              <div className="h-3 rounded-full bg-slate-100 overflow-hidden mb-1">
                 <div
                   className="h-3 rounded-full"
                   style={{ width: `${pctW}%`, backgroundColor: UI.primary }}
                 />
               </div>
+              <div className="h-3 rounded-full bg-slate-100 overflow-hidden">
+                <div
+                  className="h-3 rounded-full"
+                  style={{ width: `${pctOrders}%`, backgroundColor: UI.warning }}
+                />
+              </div>
             </div>
-            <div className="w-40 text-right text-sm text-slate-700">
-              <span className="font-semibold">{formatInt(r.tickets)}</span>
-              <span className="text-xs text-slate-500">{r.partialLabel}</span>
+            <div className="w-48 text-right text-sm text-slate-700">
+              <div>
+                <span className="font-semibold" style={{ color: UI.primary }}>
+                  {formatInt(r.tickets)}
+                </span>
+                <span className="text-xs text-slate-500">{r.partialLabel}</span>
+              </div>
+              <div>
+                <span className="font-semibold" style={{ color: UI.warning }}>
+                  {formatInt(r.orders)}
+                </span>
+              </div>
             </div>
           </div>
         );
@@ -656,10 +674,29 @@ type Row = {
   satisfaction: number | null;
 };
 
+type JanisRow = {
+  clientCode: string;
+  month: string; // YYYY-MM
+  year: number;
+  totalOrders: number;
+};
+
+function normalizeOrgKey(value: string) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
 export default function JiraExecutiveDashboard() {
   if (typeof window !== "undefined") runParserTestsOnce();
+  const jiraFileInputRef = useRef<HTMLInputElement | null>(null);
+  const janisFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [rows, setRows] = useState<Row[]>([]);
+  const [janisRows, setJanisRows] = useState<JanisRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [showExecutiveReport, setShowExecutiveReport] = useState(false);
@@ -848,13 +885,64 @@ export default function JiraExecutiveDashboard() {
     });
   };
 
+  const onJanisFile = (file: File) => {
+    setError(null);
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (res: any) => {
+        try {
+          const parsed: JanisRow[] = [];
+          for (const raw of res.data || []) {
+            const clientCode = String(coalesce(raw?.clientCode, "")).trim();
+            const monthNum = Number(String(coalesce(raw?.month, "")).trim());
+            const yearNum = Number(String(coalesce(raw?.year, "")).trim());
+            const totalOrdersNum = Number(String(coalesce(raw?.totalOrders, "")).trim());
+
+            if (!clientCode || !Number.isFinite(monthNum) || !Number.isFinite(yearNum) || !Number.isFinite(totalOrdersNum)) {
+              continue;
+            }
+            if (monthNum < 1 || monthNum > 12) continue;
+
+            const month = `${yearNum}-${String(monthNum).padStart(2, "0")}`;
+            parsed.push({
+              clientCode,
+              month,
+              year: yearNum,
+              totalOrders: totalOrdersNum,
+            });
+          }
+
+          setJanisRows(parsed);
+          if (!rows.length && parsed.length) {
+            const months = Array.from(new Set(parsed.map((r) => r.month))).sort();
+            const minMonth = months[0];
+            const maxMonth = months[months.length - 1];
+            setAutoRange({ minMonth, maxMonth });
+            setFromMonth(minMonth);
+            setToMonth(maxMonth);
+          }
+        } catch (e: any) {
+          setError((e && e.message) || "Error procesando Janis Data");
+          setJanisRows([]);
+        }
+      },
+      error: (err: any) => {
+        setError(err.message);
+        setJanisRows([]);
+      },
+    });
+  };
+
   const filterOptions = useMemo(() => {
-    const orgs = Array.from(new Set(rows.map((r) => r.organization).filter(Boolean))).sort();
+    const orgs = Array.from(
+      new Set([...rows.map((r) => r.organization), ...janisRows.map((r) => r.clientCode)].filter(Boolean))
+    ).sort();
     const assignees = Array.from(new Set(rows.map((r) => r.asignado).filter(Boolean))).sort();
     const estados = Array.from(new Set(rows.map((r) => r.estado).filter(Boolean))).sort();
-    const months = Array.from(new Set(rows.map((r) => r.month))).sort();
+    const months = Array.from(new Set([...rows.map((r) => r.month), ...janisRows.map((r) => r.month)])).sort();
     return { orgs, assignees, estados, months };
-  }, [rows]);
+  }, [rows, janisRows]);
 
   const minMonthBound =
     autoRange.minMonth ?? (filterOptions.months.length ? filterOptions.months[0] : undefined);
@@ -862,16 +950,51 @@ export default function JiraExecutiveDashboard() {
     autoRange.maxMonth ??
     (filterOptions.months.length ? filterOptions.months[filterOptions.months.length - 1] : undefined);
 
+  const overlapRange = useMemo(() => {
+    if (!rows.length || !janisRows.length) return null;
+    const jiraMonths = Array.from(new Set(rows.map((r) => r.month))).sort();
+    const janisMonths = Array.from(new Set(janisRows.map((r) => r.month))).sort();
+    if (!jiraMonths.length || !janisMonths.length) return null;
+    const start = jiraMonths[0] > janisMonths[0] ? jiraMonths[0] : janisMonths[0];
+    const end =
+      jiraMonths[jiraMonths.length - 1] < janisMonths[janisMonths.length - 1]
+        ? jiraMonths[jiraMonths.length - 1]
+        : janisMonths[janisMonths.length - 1];
+    if (start > end) return { start: "9999-99", end: "0000-00" };
+    return { start, end };
+  }, [rows, janisRows]);
+
+  const orgMatches = (candidate: string) =>
+    orgFilter === "all" || normalizeOrgKey(candidate) === normalizeOrgKey(orgFilter);
+
   const filtered = useMemo(() => {
     return rows.filter((r) => {
       if (fromMonth !== "all" && r.month < fromMonth) return false;
       if (toMonth !== "all" && r.month > toMonth) return false;
-      if (orgFilter !== "all" && r.organization !== orgFilter) return false;
+      if (overlapRange && (r.month < overlapRange.start || r.month > overlapRange.end)) return false;
+      if (!orgMatches(r.organization)) return false;
       if (assigneeFilter !== "all" && r.asignado !== assigneeFilter) return false;
       if (statusFilter !== "all" && r.estado !== statusFilter) return false;
       return true;
     });
-  }, [rows, fromMonth, toMonth, orgFilter, assigneeFilter, statusFilter]);
+  }, [rows, fromMonth, toMonth, overlapRange, assigneeFilter, statusFilter, orgFilter]);
+
+  const janisFiltered = useMemo(() => {
+    return janisRows.filter((r) => {
+      if (fromMonth !== "all" && r.month < fromMonth) return false;
+      if (toMonth !== "all" && r.month > toMonth) return false;
+      if (overlapRange && (r.month < overlapRange.start || r.month > overlapRange.end)) return false;
+      if (!orgMatches(r.clientCode)) return false;
+      return true;
+    });
+  }, [janisRows, fromMonth, toMonth, overlapRange, orgFilter]);
+
+  const janisKpis = useMemo(() => {
+    const totalOrders = janisFiltered.reduce((acc, row) => acc + row.totalOrders, 0);
+    return {
+      totalOrders,
+    };
+  }, [janisFiltered]);
 
   const kpis = useMemo(() => {
     const total = filtered.length;
@@ -963,24 +1086,34 @@ export default function JiraExecutiveDashboard() {
   }, [filtered]);
 
   const series = useMemo(() => {
-    // Tickets por mes
-    const byMonth = new Map<string, { month: string; tickets: number }>();
+    // Tickets vs Órdenes por mes
+    const byMonth = new Map<string, { month: string; tickets: number; orders: number }>();
     for (const r of filtered) {
-      const cur = byMonth.get(r.month) || { month: r.month, tickets: 0 };
+      const cur = byMonth.get(r.month) || { month: r.month, tickets: 0, orders: 0 };
       cur.tickets += 1;
       byMonth.set(r.month, cur);
     }
-    const ticketsByMonth = Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month));
+    for (const r of janisFiltered) {
+      const cur = byMonth.get(r.month) || { month: r.month, tickets: 0, orders: 0 };
+      cur.orders += r.totalOrders;
+      byMonth.set(r.month, cur);
+    }
+    const ticketsVsOrdersByMonth = Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month));
 
-    // Tickets por año
-    const byYear = new Map<string, { year: string; tickets: number }>();
+    // Tickets vs Órdenes por año
+    const byYear = new Map<string, { year: string; tickets: number; orders: number }>();
     for (const r of filtered) {
       const y = String(r.year);
-      const cur = byYear.get(y) || { year: y, tickets: 0 };
+      const cur = byYear.get(y) || { year: y, tickets: 0, orders: 0 };
       cur.tickets += 1;
       byYear.set(y, cur);
     }
-    const ticketsByYear = Array.from(byYear.values()).sort((a, b) => Number(a.year) - Number(b.year));
+    for (const r of janisFiltered) {
+      const cur = byYear.get(String(r.year)) || { year: String(r.year), tickets: 0, orders: 0 };
+      cur.orders += r.totalOrders;
+      byYear.set(String(r.year), cur);
+    }
+    const ticketsVsOrdersByYear = Array.from(byYear.values()).sort((a, b) => Number(a.year) - Number(b.year));
 
     // Estado por año
     const yearStatus = new Map<string, any>();
@@ -1107,8 +1240,8 @@ export default function JiraExecutiveDashboard() {
     })();
 
     return {
-      ticketsByMonth,
-      ticketsByYear,
+      ticketsVsOrdersByMonth,
+      ticketsVsOrdersByYear,
       estadoByYear,
       slaByYear,
       csatByYear,
@@ -1118,7 +1251,7 @@ export default function JiraExecutiveDashboard() {
       hourHeatMap,
       weekHeatMap,
     };
-  }, [filtered]);
+  }, [filtered, janisFiltered]);
 
   const estadoKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -1136,8 +1269,9 @@ export default function JiraExecutiveDashboard() {
   );
 
   const ticketsByYearBars = useMemo(() => {
-    const items = series.ticketsByYear || [];
+    const items = series.ticketsVsOrdersByYear || [];
     const maxTickets = items.reduce((m, x) => Math.max(m, Number(x.tickets) || 0), 0);
+    const maxOrders = items.reduce((m, x) => Math.max(m, Number(x.orders) || 0), 0);
 
     const maxCreated = filtered.length ? filtered[filtered.length - 1].creada : null;
     const maxYear = maxCreated ? maxCreated.getFullYear() : null;
@@ -1145,17 +1279,19 @@ export default function JiraExecutiveDashboard() {
 
     return {
       maxTickets,
+      maxOrders,
       rows: items.map((x) => {
         const y = Number(x.year);
         const partial = maxYear != null && y === maxYear && isPartialYear;
         return {
           year: String(x.year),
           tickets: Number(x.tickets) || 0,
+          orders: Number(x.orders) || 0,
           partialLabel: partial && maxCreated ? ` (parcial al ${formatDateCLShort(maxCreated)})` : "",
         };
       }),
     };
-  }, [series.ticketsByYear, filtered]);
+  }, [series.ticketsVsOrdersByYear, filtered]);
 
   const heatMaxMonthState = useMemo(() => {
     let max = 0;
@@ -1331,6 +1467,7 @@ export default function JiraExecutiveDashboard() {
 
   const clearAll = () => {
     setRows([]);
+    setJanisRows([]);
     setError(null);
     setFromMonth("all");
     setToMonth("all");
@@ -1365,14 +1502,45 @@ export default function JiraExecutiveDashboard() {
               </SelectContent>
             </Select>
 
-            <Input
+            <input
+              ref={jiraFileInputRef}
               type="file"
               accept=".csv,text/csv"
+              className="hidden"
               onChange={(e) => {
                 const f = e.target.files && e.target.files[0];
                 if (f) onFile(f);
               }}
             />
+
+            <Button
+              variant="outline"
+              onClick={() => {
+                jiraFileInputRef.current?.click();
+              }}
+            >
+              Jira Data
+            </Button>
+
+            <input
+              ref={janisFileInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files && e.target.files[0];
+                if (f) onJanisFile(f);
+              }}
+            />
+
+            <Button
+              variant="outline"
+              onClick={() => {
+                janisFileInputRef.current?.click();
+              }}
+            >
+              Janis Data
+            </Button>
 
             <Button
               className="text-white"
@@ -1423,11 +1591,11 @@ export default function JiraExecutiveDashboard() {
                 }
               }}
             >
-              {exporting ? "Exportando…" : "Exportar Informe (General)"}
+              {exporting ? "Exporting…" : "Export"}
             </Button>
 
             <Button variant="outline" onClick={clearAll}>
-              Limpiar
+              Clean
             </Button>
           </div>
         </div>
@@ -1560,20 +1728,51 @@ export default function JiraExecutiveDashboard() {
           )}
         </div>
 
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-5">
+          {kpiCard(
+            "Total Órdenes (Janis Data)",
+            formatInt(janisKpis.totalOrders),
+            "Filtrado por fecha y organización"
+          )}
+          {kpiCard("Janis Card 2", "—", "Próximamente")}
+          {kpiCard("Janis Card 3", "—", "Próximamente")}
+          {kpiCard("Janis Card 4", "—", "Próximamente")}
+          {kpiCard("Janis Card 5", "—", "Próximamente")}
+        </div>
+
         {/* Charts */}
         <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2">
           <Card className={UI.card}>
             <CardHeader>
-              <CardTitle className={UI.title}>Tickets por Mes</CardTitle>
+              <CardTitle className={UI.title}>Tickets vs Ordenes x mes</CardTitle>
             </CardHeader>
             <CardContent className="h-72">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series.ticketsByMonth}>
+                <LineChart data={series.ticketsVsOrdersByMonth}>
                   <CartesianGrid stroke={UI.grid} />
                   <XAxis dataKey="month" tickFormatter={monthLabel as any} />
-                  <YAxis />
+                  <YAxis yAxisId="left" />
+                  <YAxis yAxisId="right" orientation="right" />
                   <Tooltip labelFormatter={(l) => monthLabel(String(l))} />
-                  <Line type="monotone" dataKey="tickets" stroke={UI.primary} strokeWidth={2} dot={false} />
+                  <Legend />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="tickets"
+                    name="Tickets"
+                    stroke={UI.primary}
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="orders"
+                    name="Órdenes"
+                    stroke={UI.warning}
+                    strokeWidth={2}
+                    dot={false}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </CardContent>
@@ -1581,10 +1780,14 @@ export default function JiraExecutiveDashboard() {
 
           <Card className={UI.card}>
             <CardHeader>
-              <CardTitle className={UI.title}>Tickets por Año</CardTitle>
+              <CardTitle className={UI.title}>Tickets vs Ordenes x año</CardTitle>
             </CardHeader>
             <CardContent>
-              <YearBars rows={ticketsByYearBars.rows} maxTickets={ticketsByYearBars.maxTickets} />
+              <YearBars
+                rows={ticketsByYearBars.rows}
+                maxTickets={ticketsByYearBars.maxTickets}
+                maxOrders={ticketsByYearBars.maxOrders}
+              />
             </CardContent>
           </Card>
         </div>
