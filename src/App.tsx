@@ -715,6 +715,15 @@ function normalizeOrgKey(value: string) {
     .replace(/[^a-z0-9]/g, "");
 }
 
+function shiftYm(ymValue: string, monthDelta: number) {
+  const [yRaw, mRaw] = String(ymValue || "").split("-");
+  const y = Number(yRaw);
+  const m = Number(mRaw);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) return ymValue;
+  const d = new Date(y, m - 1 + monthDelta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 export default function JiraExecutiveDashboard() {
   if (typeof window !== "undefined") runParserTestsOnce();
   const jiraFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1017,11 +1026,47 @@ export default function JiraExecutiveDashboard() {
   const janisKpis = useMemo(() => {
     const totalOrders = janisFiltered.reduce((acc, row) => acc + row.totalOrders, 0);
     const ticketsPer1kOrders = totalOrders > 0 ? (filtered.length / totalOrders) * 1000 : null;
+
+    const currentMonths = Array.from(new Set(janisFiltered.map((r) => r.month))).sort();
+    const fallbackTicketMonths = Array.from(new Set(filtered.map((r) => r.month))).sort();
+    const activeStart = currentMonths[0] || fallbackTicketMonths[0] || null;
+    const activeEnd =
+      currentMonths[currentMonths.length - 1] || fallbackTicketMonths[fallbackTicketMonths.length - 1] || null;
+
+    let yoyPct: number | null = null;
+    if (activeStart && activeEnd) {
+      const previousStart = shiftYm(activeStart, -12);
+      const previousEnd = shiftYm(activeEnd, -12);
+
+      const prevTickets = rows.filter((r) => {
+        if (r.month < previousStart || r.month > previousEnd) return false;
+        if (!orgMatches(r.organization)) return false;
+        if (assigneeFilter !== "all" && r.asignado !== assigneeFilter) return false;
+        if (statusFilter !== "all" && r.estado !== statusFilter) return false;
+        return true;
+      }).length;
+
+      const prevOrders = janisRows
+        .filter((r) => {
+          if (r.month < previousStart || r.month > previousEnd) return false;
+          if (!orgMatches(r.clientCode)) return false;
+          return true;
+        })
+        .reduce((acc, row) => acc + row.totalOrders, 0);
+
+      const previousTicketsPer1k = prevOrders > 0 ? (prevTickets / prevOrders) * 1000 : null;
+      if (ticketsPer1kOrders != null && previousTicketsPer1k != null && previousTicketsPer1k > 0) {
+        yoyPct = ((ticketsPer1kOrders - previousTicketsPer1k) / previousTicketsPer1k) * 100;
+      }
+    }
+
     return {
       totalOrders,
       ticketsPer1kOrders,
+      ordersPerTicketRounded: filtered.length > 0 ? Math.round(totalOrders / filtered.length) : null,
+      yoyPct,
     };
-  }, [janisFiltered, filtered]);
+  }, [janisFiltered, filtered, rows, janisRows, assigneeFilter, statusFilter, orgFilter]);
 
   const kpis = useMemo(() => {
     const total = filtered.length;
@@ -1800,14 +1845,35 @@ export default function JiraExecutiveDashboard() {
             formatInt(janisKpis.totalOrders),
             "Filtrado por fecha y organización"
           )}
-          {kpiCard(
-            "Tickets por 1.000 órdenes",
-            janisKpis.ticketsPer1kOrders == null ? "—" : janisKpis.ticketsPer1kOrders.toFixed(2),
-            <>
-              <div>Si baja → mejor operación</div>
-              <div>Si sube → problemas reales</div>
-            </>
-          )}
+          <Card className={UI.card}>
+            <CardHeader className="pb-2">
+              <CardTitle className={UI.title}>Tickets por 1.000 órdenes</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold tracking-tight text-slate-900">
+                {janisKpis.ticketsPer1kOrders == null ? "—" : janisKpis.ticketsPer1kOrders.toFixed(2)}
+              </div>
+              <div className={"mt-1 " + UI.subtle}>
+                {filtered.length === 0
+                  ? "Sin tickets en el período"
+                  : `1 ticket cada ${formatInt(janisKpis.ordersPerTicketRounded || 0)} órdenes`}
+              </div>
+              {janisKpis.yoyPct != null ? (
+                <div
+                  className="mt-1 text-xs font-semibold"
+                  style={{ color: janisKpis.yoyPct < 0 ? UI.ok : "#b45309" }}
+                >
+                  {janisKpis.yoyPct < 0 ? "▼" : "▲"} {janisKpis.yoyPct > 0 ? "+" : ""}
+                  {janisKpis.yoyPct.toFixed(2)}% vs mismo período anterior (
+                  {janisKpis.yoyPct < 0 ? "mejora operativa" : "mayor fricción"})
+                </div>
+              ) : null}
+              <div className={"mt-1 " + UI.subtle}>
+                <div>↓ menor fricción operativa</div>
+                <div>↑ posible mayor fricción operativa</div>
+              </div>
+            </CardContent>
+          </Card>
           {kpiCard("Janis Card 3", "—", "Próximamente")}
           {kpiCard("Janis Card 4", "—", "Próximamente")}
           {kpiCard("Janis Card 5", "—", "Próximamente")}
