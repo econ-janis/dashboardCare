@@ -1746,35 +1746,43 @@ export default function JiraExecutiveDashboard() {
             <CardHeader>
               <CardTitle className={UI.title}>Tickets vs Ordenes x mes</CardTitle>
             </CardHeader>
-            <CardContent className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series.ticketsVsOrdersByMonth}>
-                  <CartesianGrid stroke={UI.grid} />
-                  <XAxis dataKey="month" tickFormatter={monthLabel as any} />
-                  <YAxis yAxisId="left" />
-                  <YAxis yAxisId="right" orientation="right" />
-                  <Tooltip labelFormatter={(l) => monthLabel(String(l))} />
-                  <Legend />
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="tickets"
-                    name="Tickets"
-                    stroke={UI.primary}
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                  <Line
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="orders"
-                    name="Órdenes"
-                    stroke={UI.warning}
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+            <CardContent className="h-80">
+              <div className="h-full flex flex-col">
+                <div className="flex-1 min-h-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={series.ticketsVsOrdersByMonth}>
+                      <CartesianGrid stroke={UI.grid} />
+                      <XAxis dataKey="month" tickFormatter={monthLabel as any} />
+                      <YAxis yAxisId="left" />
+                      <YAxis yAxisId="right" orientation="right" />
+                      <Tooltip labelFormatter={(l) => monthLabel(String(l))} />
+                      <Legend />
+                      <Line
+                        yAxisId="left"
+                        type="monotone"
+                        dataKey="tickets"
+                        name="Tickets"
+                        stroke={UI.primary}
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                      <Line
+                        yAxisId="right"
+                        type="monotone"
+                        dataKey="orders"
+                        name="Órdenes"
+                        stroke={UI.warning}
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <p className={"mt-2 " + UI.subtle}>
+                  Eje izquierdo (azul): cantidad de tickets. Eje derecho (naranjo): cantidad de órdenes. Cuando ambas
+                  curvas suben o bajan juntas, sugiere correlación entre volumen comercial y demanda de soporte.
+                </p>
+              </div>
             </CardContent>
           </Card>
 
