@@ -586,9 +586,11 @@ function HealthBadge({ label, color }: { label: string; color: string }) {
 function YearBars({
   rows,
   maxTickets,
+  maxOrders,
 }: {
-  rows: Array<{ year: string; tickets: number; partialLabel: string }>;
+  rows: Array<{ year: string; tickets: number; orders: number; partialLabel: string }>;
   maxTickets: number;
+  maxOrders: number;
 }) {
   return (
     <div className="space-y-3">
@@ -596,20 +598,36 @@ function YearBars({
         const pctW = maxTickets
           ? Math.max(0, Math.min(100, (r.tickets / maxTickets) * 100))
           : 0;
+        const pctOrders = maxOrders ? Math.max(0, Math.min(100, (r.orders / maxOrders) * 100)) : 0;
         return (
           <div key={r.year} className="flex items-center gap-3">
             <div className="w-12 text-sm text-slate-700 font-semibold">{r.year}</div>
             <div className="flex-1">
-              <div className="h-3 rounded-full bg-slate-100 overflow-hidden">
+              <div className="h-3 rounded-full bg-slate-100 overflow-hidden mb-1">
                 <div
                   className="h-3 rounded-full"
                   style={{ width: `${pctW}%`, backgroundColor: UI.primary }}
                 />
               </div>
+              <div className="h-3 rounded-full bg-slate-100 overflow-hidden">
+                <div
+                  className="h-3 rounded-full"
+                  style={{ width: `${pctOrders}%`, backgroundColor: UI.warning }}
+                />
+              </div>
             </div>
-            <div className="w-40 text-right text-sm text-slate-700">
-              <span className="font-semibold">{formatInt(r.tickets)}</span>
-              <span className="text-xs text-slate-500">{r.partialLabel}</span>
+            <div className="w-48 text-right text-sm text-slate-700">
+              <div>
+                <span className="font-semibold" style={{ color: UI.primary }}>
+                  {formatInt(r.tickets)}
+                </span>
+                <span className="text-xs text-slate-500">{r.partialLabel}</span>
+              </div>
+              <div>
+                <span className="font-semibold" style={{ color: UI.warning }}>
+                  {formatInt(r.orders)}
+                </span>
+              </div>
             </div>
           </div>
         );
@@ -1068,24 +1086,34 @@ export default function JiraExecutiveDashboard() {
   }, [filtered]);
 
   const series = useMemo(() => {
-    // Tickets por mes
-    const byMonth = new Map<string, { month: string; tickets: number }>();
+    // Tickets vs Órdenes por mes
+    const byMonth = new Map<string, { month: string; tickets: number; orders: number }>();
     for (const r of filtered) {
-      const cur = byMonth.get(r.month) || { month: r.month, tickets: 0 };
+      const cur = byMonth.get(r.month) || { month: r.month, tickets: 0, orders: 0 };
       cur.tickets += 1;
       byMonth.set(r.month, cur);
     }
-    const ticketsByMonth = Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month));
+    for (const r of janisFiltered) {
+      const cur = byMonth.get(r.month) || { month: r.month, tickets: 0, orders: 0 };
+      cur.orders += r.totalOrders;
+      byMonth.set(r.month, cur);
+    }
+    const ticketsVsOrdersByMonth = Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month));
 
-    // Tickets por año
-    const byYear = new Map<string, { year: string; tickets: number }>();
+    // Tickets vs Órdenes por año
+    const byYear = new Map<string, { year: string; tickets: number; orders: number }>();
     for (const r of filtered) {
       const y = String(r.year);
-      const cur = byYear.get(y) || { year: y, tickets: 0 };
+      const cur = byYear.get(y) || { year: y, tickets: 0, orders: 0 };
       cur.tickets += 1;
       byYear.set(y, cur);
     }
-    const ticketsByYear = Array.from(byYear.values()).sort((a, b) => Number(a.year) - Number(b.year));
+    for (const r of janisFiltered) {
+      const cur = byYear.get(String(r.year)) || { year: String(r.year), tickets: 0, orders: 0 };
+      cur.orders += r.totalOrders;
+      byYear.set(String(r.year), cur);
+    }
+    const ticketsVsOrdersByYear = Array.from(byYear.values()).sort((a, b) => Number(a.year) - Number(b.year));
 
     // Estado por año
     const yearStatus = new Map<string, any>();
@@ -1212,8 +1240,8 @@ export default function JiraExecutiveDashboard() {
     })();
 
     return {
-      ticketsByMonth,
-      ticketsByYear,
+      ticketsVsOrdersByMonth,
+      ticketsVsOrdersByYear,
       estadoByYear,
       slaByYear,
       csatByYear,
@@ -1223,7 +1251,7 @@ export default function JiraExecutiveDashboard() {
       hourHeatMap,
       weekHeatMap,
     };
-  }, [filtered]);
+  }, [filtered, janisFiltered]);
 
   const estadoKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -1241,8 +1269,9 @@ export default function JiraExecutiveDashboard() {
   );
 
   const ticketsByYearBars = useMemo(() => {
-    const items = series.ticketsByYear || [];
+    const items = series.ticketsVsOrdersByYear || [];
     const maxTickets = items.reduce((m, x) => Math.max(m, Number(x.tickets) || 0), 0);
+    const maxOrders = items.reduce((m, x) => Math.max(m, Number(x.orders) || 0), 0);
 
     const maxCreated = filtered.length ? filtered[filtered.length - 1].creada : null;
     const maxYear = maxCreated ? maxCreated.getFullYear() : null;
@@ -1250,17 +1279,19 @@ export default function JiraExecutiveDashboard() {
 
     return {
       maxTickets,
+      maxOrders,
       rows: items.map((x) => {
         const y = Number(x.year);
         const partial = maxYear != null && y === maxYear && isPartialYear;
         return {
           year: String(x.year),
           tickets: Number(x.tickets) || 0,
+          orders: Number(x.orders) || 0,
           partialLabel: partial && maxCreated ? ` (parcial al ${formatDateCLShort(maxCreated)})` : "",
         };
       }),
     };
-  }, [series.ticketsByYear, filtered]);
+  }, [series.ticketsVsOrdersByYear, filtered]);
 
   const heatMaxMonthState = useMemo(() => {
     let max = 0;
@@ -1713,16 +1744,35 @@ export default function JiraExecutiveDashboard() {
         <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2">
           <Card className={UI.card}>
             <CardHeader>
-              <CardTitle className={UI.title}>Tickets por Mes</CardTitle>
+              <CardTitle className={UI.title}>Tickets vs Ordenes x mes</CardTitle>
             </CardHeader>
             <CardContent className="h-72">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series.ticketsByMonth}>
+                <LineChart data={series.ticketsVsOrdersByMonth}>
                   <CartesianGrid stroke={UI.grid} />
                   <XAxis dataKey="month" tickFormatter={monthLabel as any} />
-                  <YAxis />
+                  <YAxis yAxisId="left" />
+                  <YAxis yAxisId="right" orientation="right" />
                   <Tooltip labelFormatter={(l) => monthLabel(String(l))} />
-                  <Line type="monotone" dataKey="tickets" stroke={UI.primary} strokeWidth={2} dot={false} />
+                  <Legend />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="tickets"
+                    name="Tickets"
+                    stroke={UI.primary}
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="orders"
+                    name="Órdenes"
+                    stroke={UI.warning}
+                    strokeWidth={2}
+                    dot={false}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </CardContent>
@@ -1730,10 +1780,14 @@ export default function JiraExecutiveDashboard() {
 
           <Card className={UI.card}>
             <CardHeader>
-              <CardTitle className={UI.title}>Tickets por Año</CardTitle>
+              <CardTitle className={UI.title}>Tickets vs Ordenes x año</CardTitle>
             </CardHeader>
             <CardContent>
-              <YearBars rows={ticketsByYearBars.rows} maxTickets={ticketsByYearBars.maxTickets} />
+              <YearBars
+                rows={ticketsByYearBars.rows}
+                maxTickets={ticketsByYearBars.maxTickets}
+                maxOrders={ticketsByYearBars.maxOrders}
+              />
             </CardContent>
           </Card>
         </div>
