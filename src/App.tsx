@@ -1297,13 +1297,6 @@ export default function JiraExecutiveDashboard() {
     const items = series.ticketsVsOrdersByYear || [];
     const maxTickets = items.reduce((m, x) => Math.max(m, Number(x.tickets) || 0), 0);
     const maxOrders = items.reduce((m, x) => Math.max(m, Number(x.orders) || 0), 0);
-    const byYear = new Map<number, { tickets: number; orders: number }>();
-    for (const item of items) {
-      byYear.set(Number(item.year), {
-        tickets: Number(item.tickets) || 0,
-        orders: Number(item.orders) || 0,
-      });
-    }
 
     const maxCreated = filtered.length ? filtered[filtered.length - 1].creada : null;
     const maxYear = maxCreated ? maxCreated.getFullYear() : null;
@@ -1315,27 +1308,54 @@ export default function JiraExecutiveDashboard() {
       return ((current - prev) / prev) * 100;
     };
 
+    const currentYearMaxMonth = (() => {
+      const months = (series.ticketsVsOrdersByMonth || [])
+        .map((x: any) => String(x.month || ""))
+        .filter((m: string) => m.startsWith(`${currentYear}-`))
+        .sort();
+      return months.length ? Number(months[months.length - 1].split("-")[1]) : null;
+    })();
+
+    const ytdTotals = (year: number, monthLimit: number | null) => {
+      const rows = (series.ticketsVsOrdersByMonth || []).filter((x: any) => {
+        const m = String(x.month || "");
+        if (!m.startsWith(`${year}-`)) return false;
+        if (!monthLimit) return true;
+        const mm = Number(m.split("-")[1]);
+        return mm <= monthLimit;
+      });
+      return rows.reduce(
+        (acc: { tickets: number; orders: number }, row: any) => {
+          acc.tickets += Number(row.tickets) || 0;
+          acc.orders += Number(row.orders) || 0;
+          return acc;
+        },
+        { tickets: 0, orders: 0 }
+      );
+    };
+
     return {
       maxTickets,
       maxOrders,
       rows: items.map((x) => {
         const y = Number(x.year);
         const partial = maxYear != null && y === maxYear && isPartialYear;
-        const prev = byYear.get(y - 1);
         const ticketsVal = Number(x.tickets) || 0;
         const ordersVal = Number(x.orders) || 0;
-        const showGrowth = y === currentYear && !!prev;
+        const showGrowth = y === currentYear && currentYearMaxMonth != null;
+        const currentYtd = ytdTotals(y, currentYearMaxMonth);
+        const prevYtd = ytdTotals(y - 1, currentYearMaxMonth);
         return {
           year: String(x.year),
           tickets: ticketsVal,
           orders: ordersVal,
           partialLabel: partial && maxCreated ? ` (parcial al ${formatDateCLShort(maxCreated)})` : "",
-          ticketsGrowthPct: showGrowth ? growthPct(ticketsVal, prev?.tickets || 0) : null,
-          ordersGrowthPct: showGrowth ? growthPct(ordersVal, prev?.orders || 0) : null,
+          ticketsGrowthPct: showGrowth ? growthPct(currentYtd.tickets, prevYtd.tickets) : null,
+          ordersGrowthPct: showGrowth ? growthPct(currentYtd.orders, prevYtd.orders) : null,
         };
       }),
     };
-  }, [series.ticketsVsOrdersByYear, filtered]);
+  }, [series.ticketsVsOrdersByYear, series.ticketsVsOrdersByMonth, filtered]);
 
   const heatMaxMonthState = useMemo(() => {
     let max = 0;
