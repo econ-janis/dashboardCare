@@ -1016,10 +1016,12 @@ export default function JiraExecutiveDashboard() {
 
   const janisKpis = useMemo(() => {
     const totalOrders = janisFiltered.reduce((acc, row) => acc + row.totalOrders, 0);
+    const ticketsPer1kOrders = totalOrders > 0 ? (filtered.length / totalOrders) * 1000 : null;
     return {
       totalOrders,
+      ticketsPer1kOrders,
     };
-  }, [janisFiltered]);
+  }, [janisFiltered, filtered]);
 
   const kpis = useMemo(() => {
     const total = filtered.length;
@@ -1798,7 +1800,14 @@ export default function JiraExecutiveDashboard() {
             formatInt(janisKpis.totalOrders),
             "Filtrado por fecha y organización"
           )}
-          {kpiCard("Janis Card 2", "—", "Próximamente")}
+          {kpiCard(
+            "Tickets por 1.000 órdenes",
+            janisKpis.ticketsPer1kOrders == null ? "—" : janisKpis.ticketsPer1kOrders.toFixed(2),
+            <>
+              <div>Si baja → mejor operación</div>
+              <div>Si sube → problemas reales</div>
+            </>
+          )}
           {kpiCard("Janis Card 3", "—", "Próximamente")}
           {kpiCard("Janis Card 4", "—", "Próximamente")}
           {kpiCard("Janis Card 5", "—", "Próximamente")}
