@@ -588,7 +588,14 @@ function YearBars({
   maxTickets,
   maxOrders,
 }: {
-  rows: Array<{ year: string; tickets: number; orders: number; partialLabel: string }>;
+  rows: Array<{
+    year: string;
+    tickets: number;
+    orders: number;
+    partialLabel: string;
+    ticketsGrowthPct: number | null;
+    ordersGrowthPct: number | null;
+  }>;
   maxTickets: number;
   maxOrders: number;
 }) {
@@ -622,11 +629,29 @@ function YearBars({
                   {formatInt(r.tickets)}
                 </span>
                 <span className="text-xs text-slate-500">{r.partialLabel}</span>
+                {r.ticketsGrowthPct != null ? (
+                  <span
+                    className="ml-2 text-xs font-semibold"
+                    style={{ color: r.ticketsGrowthPct >= 0 ? UI.ok : UI.danger }}
+                  >
+                    {r.ticketsGrowthPct >= 0 ? "+" : ""}
+                    {r.ticketsGrowthPct.toFixed(1)}%
+                  </span>
+                ) : null}
               </div>
               <div>
                 <span className="font-semibold" style={{ color: UI.warning }}>
                   {formatInt(r.orders)}
                 </span>
+                {r.ordersGrowthPct != null ? (
+                  <span
+                    className="ml-2 text-xs font-semibold"
+                    style={{ color: r.ordersGrowthPct >= 0 ? UI.ok : UI.danger }}
+                  >
+                    {r.ordersGrowthPct >= 0 ? "+" : ""}
+                    {r.ordersGrowthPct.toFixed(1)}%
+                  </span>
+                ) : null}
               </div>
             </div>
           </div>
@@ -1272,10 +1297,23 @@ export default function JiraExecutiveDashboard() {
     const items = series.ticketsVsOrdersByYear || [];
     const maxTickets = items.reduce((m, x) => Math.max(m, Number(x.tickets) || 0), 0);
     const maxOrders = items.reduce((m, x) => Math.max(m, Number(x.orders) || 0), 0);
+    const byYear = new Map<number, { tickets: number; orders: number }>();
+    for (const item of items) {
+      byYear.set(Number(item.year), {
+        tickets: Number(item.tickets) || 0,
+        orders: Number(item.orders) || 0,
+      });
+    }
 
     const maxCreated = filtered.length ? filtered[filtered.length - 1].creada : null;
     const maxYear = maxCreated ? maxCreated.getFullYear() : null;
     const isPartialYear = !!maxCreated && !(maxCreated.getMonth() === 11 && maxCreated.getDate() === 31);
+    const currentYear = new Date().getFullYear();
+
+    const growthPct = (current: number, prev: number) => {
+      if (!Number.isFinite(current) || !Number.isFinite(prev) || prev <= 0) return null;
+      return ((current - prev) / prev) * 100;
+    };
 
     return {
       maxTickets,
@@ -1283,11 +1321,17 @@ export default function JiraExecutiveDashboard() {
       rows: items.map((x) => {
         const y = Number(x.year);
         const partial = maxYear != null && y === maxYear && isPartialYear;
+        const prev = byYear.get(y - 1);
+        const ticketsVal = Number(x.tickets) || 0;
+        const ordersVal = Number(x.orders) || 0;
+        const showGrowth = y === currentYear && !!prev;
         return {
           year: String(x.year),
-          tickets: Number(x.tickets) || 0,
-          orders: Number(x.orders) || 0,
+          tickets: ticketsVal,
+          orders: ordersVal,
           partialLabel: partial && maxCreated ? ` (parcial al ${formatDateCLShort(maxCreated)})` : "",
+          ticketsGrowthPct: showGrowth ? growthPct(ticketsVal, prev?.tickets || 0) : null,
+          ordersGrowthPct: showGrowth ? growthPct(ordersVal, prev?.orders || 0) : null,
         };
       }),
     };
