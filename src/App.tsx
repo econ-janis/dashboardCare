@@ -1290,12 +1290,12 @@ export default function JiraExecutiveDashboard() {
     const totalTickets = filtered.length;
     const topAssignees = count((r) => r.asignado).slice(0, 10);
 
-    // Pie top 5 orgs + otros
+    // Pie top 10 orgs + otros
     const allOrgs = count((r) => r.organization);
-    const top5 = allOrgs.slice(0, 5);
-    const top5Sum = top5.reduce((s, x) => s + x.tickets, 0);
-    const others = Math.max(0, totalTickets - top5Sum);
-    const topOrgsPie = [...top5];
+    const top10 = allOrgs.slice(0, 10);
+    const top10Sum = top10.reduce((s, x) => s + x.tickets, 0);
+    const others = Math.max(0, totalTickets - top10Sum);
+    const topOrgsPie = [...top10];
     if (others > 0) topOrgsPie.push({ name: "Otros", tickets: others });
 
     // CSAT por año
@@ -2082,7 +2082,7 @@ export default function JiraExecutiveDashboard() {
         <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2">
           <Card className={UI.card}>
             <CardHeader>
-              <CardTitle className={UI.title}>Top 5 Organizaciones (torta) + Otros</CardTitle>
+              <CardTitle className={UI.title}>Top 10 Organizaciones (torta) + Otros</CardTitle>
             </CardHeader>
             <CardContent className="h-80">
               <ResponsiveContainer width="100%" height="100%">
