@@ -1917,12 +1917,12 @@ export default function JiraExecutiveDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-semibold tracking-tight text-slate-900">
-                {janisKpis.ticketsPer1kOrders == null ? "—" : janisKpis.ticketsPer1kOrders.toFixed(2)}
-              </div>
-              <div className={"mt-1 " + UI.subtle}>
                 {filtered.length === 0
                   ? "Sin tickets en el período"
                   : `1 ticket cada ${formatInt(janisKpis.ordersPerTicketRounded || 0)} órdenes`}
+              </div>
+              <div className={"mt-1 text-sm font-medium text-slate-700"}>
+                {janisKpis.ticketsPer1kOrders == null ? "—" : janisKpis.ticketsPer1kOrders.toFixed(2)}
               </div>
             </CardContent>
           </Card>
