@@ -1917,25 +1917,13 @@ export default function JiraExecutiveDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-semibold tracking-tight text-slate-900">
-                {janisKpis.ticketsPer1kOrders == null ? "—" : janisKpis.ticketsPer1kOrders.toFixed(2)}
-              </div>
-              <div className={"mt-1 " + UI.subtle}>
                 {filtered.length === 0
                   ? "Sin tickets en el período"
                   : `1 ticket cada ${formatInt(janisKpis.ordersPerTicketRounded || 0)} órdenes`}
               </div>
-              {janisKpis.yoyPct != null ? (
-                <div
-                  className="mt-1 text-xs font-semibold"
-                  style={{ color: janisKpis.yoyPct < 0 ? UI.ok : "#b45309" }}
-                >
-                  {janisKpis.yoyPct < 0 ? "▼" : "▲"} {janisKpis.yoyPct > 0 ? "+" : ""}
-                  {janisKpis.yoyPct.toFixed(2)}%{" "}
-                  {janisKpis.yoyPct < 0
-                    ? "mejora operativa vs mismo período anterior"
-                    : "mayor fricción vs mismo período anterior"}
-                </div>
-              ) : null}
+              <div className={"mt-1 text-sm font-medium text-slate-700"}>
+                {janisKpis.ticketsPer1kOrders == null ? "—" : janisKpis.ticketsPer1kOrders.toFixed(2)}
+              </div>
             </CardContent>
           </Card>
           {kpiCard("Janis Card 3", "—", "Próximamente")}
