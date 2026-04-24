@@ -1924,18 +1924,6 @@ export default function JiraExecutiveDashboard() {
                   ? "Sin tickets en el período"
                   : `1 ticket cada ${formatInt(janisKpis.ordersPerTicketRounded || 0)} órdenes`}
               </div>
-              {janisKpis.yoyPct != null ? (
-                <div
-                  className="mt-1 text-xs font-semibold"
-                  style={{ color: janisKpis.yoyPct < 0 ? UI.ok : "#b45309" }}
-                >
-                  {janisKpis.yoyPct < 0 ? "▼" : "▲"} {janisKpis.yoyPct > 0 ? "+" : ""}
-                  {janisKpis.yoyPct.toFixed(2)}%{" "}
-                  {janisKpis.yoyPct < 0
-                    ? "mejora operativa vs mismo período anterior"
-                    : "mayor fricción vs mismo período anterior"}
-                </div>
-              ) : null}
             </CardContent>
           </Card>
           {kpiCard("Janis Card 3", "—", "Próximamente")}
