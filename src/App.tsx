@@ -453,7 +453,7 @@ function titleForTheme(tokenScores: Map<string, number>) {
   const tokenList = Array.from(tokenScores.entries())
     .filter(([token]) => !token.includes("_"))
     .sort((a, b) => b[1] - a[1]);
-  const tokenSet = new Set(tokenList.slice(0, 10).map(([token]) => token));
+  const tokenSet = new Set(tokenList.slice(0, 12).map(([token]) => token));
 
   const matchingRule = THEME_LABEL_RULES.map((rule) => ({
     rule,
@@ -468,13 +468,64 @@ function titleForTheme(tokenScores: Map<string, number>) {
   return words.length ? toTitleCaseWords(words.join(" / ")) : "Tema recurrente";
 }
 
+type ThemeDoc = {
+  tokens: string[];
+  tokenSet: Set<string>;
+  summary: string;
+};
+
+function buildKeywordFallbackThemes(docs: ThemeDoc[], totalTickets: number, limit: number) {
+  const tokenDocs = new Map<string, Set<number>>();
+  docs.forEach((doc, docIndex) => {
+    doc.tokenSet.forEach((token) => {
+      if (!token.includes("_")) {
+        if (!tokenDocs.has(token)) tokenDocs.set(token, new Set());
+        tokenDocs.get(token)?.add(docIndex);
+      }
+    });
+  });
+
+  const candidates = Array.from(tokenDocs.entries())
+    .map(([token, docIndexes]) => ({ token, docIndexes, count: docIndexes.size }))
+    .filter((candidate) => candidate.count >= 2 && candidate.count <= Math.max(2, docs.length * 0.85))
+    .map((candidate) => ({
+      ...candidate,
+      score: candidate.count * Math.log(1 + docs.length / candidate.count),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(20, limit * 8));
+
+  return candidates
+    .map((candidate, index) => {
+      const tokenScores = new Map<string, number>();
+      const examples: string[] = [];
+      candidate.docIndexes.forEach((docIndex) => {
+        const doc = docs[docIndex];
+        doc.tokenSet.forEach((token) => {
+          if (!token.includes("_")) tokenScores.set(token, (tokenScores.get(token) || 0) + 1);
+        });
+        if (doc.summary && !examples.includes(doc.summary) && examples.length < 3) examples.push(doc.summary);
+      });
+
+      return {
+        id: `keyword-theme-${index + 1}`,
+        label: titleForTheme(tokenScores),
+        count: candidate.count,
+        percentage: totalTickets ? (candidate.count / totalTickets) * 100 : 0,
+        examples,
+      };
+    })
+    .filter((theme, index, arr) => arr.findIndex((x) => x.label === theme.label) === index)
+    .slice(0, limit);
+}
+
 export function analyzeTopTicketThemes(tickets: Row[], limit = 5): TicketTheme[] {
   const docs = tickets
-    .map((ticket, index) => {
+    .map((ticket) => {
       const text = `${ticket.resumen || ""} ${ticket.descripcion || ""}`.trim();
       const tokens = tokenizeThemeText(text);
       const summary = compactSnippet(ticket.resumen || ticket.descripcion || ticket.key || "Ticket sin resumen");
-      return { index, tokens, summary };
+      return { tokens, tokenSet: new Set(tokens), summary };
     })
     .filter((doc) => doc.tokens.length >= 2);
 
@@ -493,11 +544,22 @@ export function analyzeTopTicketThemes(tickets: Row[], limit = 5): TicketTheme[]
         const df = documentFrequency.get(token) || 1;
         const idf = Math.log(1 + docs.length / df);
         const isBigram = token.includes("_");
-        return [token, (1 + Math.log(count)) * idf * (isBigram ? 1.15 : 1)] as [string, number];
+        const isKnownTopic = THEME_LABEL_RULES.some((rule) => rule.tokens.includes(token));
+        const tooCommon = df > docs.length * 0.82 && !isKnownTopic;
+        if (tooCommon) return null;
+        const topicBoost = isKnownTopic ? 1.35 : 1;
+        return [token, (1 + Math.log(count)) * (0.45 + idf) * (isBigram ? 1.12 : 1) * topicBoost] as [string, number];
       })
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 36);
-    return new Map(weighted);
+      .filter(Boolean) as Array<[string, number]>;
+
+    const byWeight = [...weighted].sort((a, b) => b[1] - a[1]).slice(0, 30);
+    const byFrequency = [...weighted]
+      .sort((a, b) => (documentFrequency.get(b[0]) || 0) - (documentFrequency.get(a[0]) || 0))
+      .slice(0, 12);
+    const merged = new Map<string, number>();
+    [...byWeight, ...byFrequency].forEach(([token, value]) => merged.set(token, Math.max(merged.get(token) || 0, value)));
+    const compact = Array.from(merged.entries()).slice(0, 42);
+    return new Map(compact);
   });
 
   type Cluster = {
@@ -573,7 +635,7 @@ export function analyzeTopTicketThemes(tickets: Row[], limit = 5): TicketTheme[]
     }
   }
 
-  return clusters
+  const clusteredThemes = clusters
     .filter((cluster) => cluster.docIndexes.length >= 2)
     .sort((a, b) => b.docIndexes.length - a.docIndexes.length)
     .slice(0, limit)
@@ -584,6 +646,20 @@ export function analyzeTopTicketThemes(tickets: Row[], limit = 5): TicketTheme[]
       percentage: (cluster.docIndexes.length / tickets.length) * 100,
       examples: cluster.examples.slice(0, 3),
     }));
+
+  if (clusteredThemes.length >= limit) return clusteredThemes;
+
+  const fallbackThemes = buildKeywordFallbackThemes(docs, tickets.length, limit);
+  const seenLabels = new Set(clusteredThemes.map((theme) => theme.label));
+  const mergedThemes = [...clusteredThemes];
+  fallbackThemes.forEach((theme) => {
+    if (!seenLabels.has(theme.label) && mergedThemes.length < limit) {
+      seenLabels.add(theme.label);
+      mergedThemes.push({ ...theme, id: `theme-${mergedThemes.length + 1}` });
+    }
+  });
+
+  return mergedThemes;
 }
 
 function getField(row: Record<string, any>, candidates: string[]) {
@@ -1162,6 +1238,29 @@ function runParserTestsOnce() {
   const arr: string[] = [];
   const min = arr.length ? arr[0] : undefined;
   console.assert(min === undefined, "safe min when empty");
+
+  const baseThemeRow = {
+    key: "TEST-1",
+    organization: "Test",
+    estado: "Abierto",
+    asignado: "Agent",
+    linkedKeys: [],
+    creada: new Date(2026, 0, 1),
+    year: 2026,
+    month: "2026-01",
+    slaResponseHours: null,
+    slaResponseStatus: "Cumplido" as const,
+    satisfaction: null,
+  };
+  const sampleThemes = analyzeTopTicketThemes(
+    [
+      { ...baseThemeRow, key: "TEST-1", resumen: "Error al crear orden", descripcion: "" },
+      { ...baseThemeRow, key: "TEST-2", resumen: "No permite generar pedido", descripcion: "" },
+      { ...baseThemeRow, key: "TEST-3", resumen: "Problema creando compra", descripcion: "" },
+    ],
+    1
+  );
+  console.assert(sampleThemes[0]?.count === 3, "theme analysis should group semantically similar order creation tickets");
 }
 
 type Row = {
@@ -1485,8 +1584,8 @@ export default function JiraExecutiveDashboard() {
 
             parsed.push({
               key: String(coalesce(r["clave de incidencia"], coalesce(r["key"], ""))).trim(),
-              resumen: String(coalesce(getField(r, ["resumen", "summary", "título", "titulo", "title"]), "")).trim(),
-              descripcion: String(coalesce(getField(r, ["descripción", "descripcion", "description"]), "")).trim(),
+              resumen: String(coalesce(getField(r, ["resumen", "summary", "título", "titulo", "title", "asunto", "subject"]), "")).trim(),
+              descripcion: String(coalesce(getField(r, ["descripción", "descripcion", "description", "descripción completa", "descripcion completa", "description full"]), "")).trim(),
               organization: org,
               estado,
               asignado: String(coalesce(r["persona asignada"], "")).trim(),
