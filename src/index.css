@@ -94,4 +94,38 @@
     border-radius: 12px; /* ~rounded-xl */
     box-shadow: none;
   }
+
+  .date-filter-highlight {
+    background: #fff7ed !important;
+    border-color: #fed7aa !important;
+  }
+
+  .date-filter-highlight input[type="month"] {
+    background: #fffbeb !important;
+    border-color: #fdba74 !important;
+  }
+
+  .interannual-comparison {
+    display: grid;
+    gap: 2px;
+  }
+
+  .interannual-title {
+    font-weight: 600;
+    color: rgb(71 85 105); /* slate-600 */
+  }
+
+  .metric-better {
+    color: #15803d;
+    font-weight: 600;
+  }
+
+  .metric-worse {
+    color: #dc2626;
+    font-weight: 600;
+  }
+
+  .metric-neutral {
+    color: rgb(100 116 139); /* slate-500 */
+  }
 }
