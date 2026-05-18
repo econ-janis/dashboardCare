@@ -277,6 +277,385 @@ function toTitleCaseWords(s: string) {
     .replace(/\p{L}[\p{L}\p{N}'-]*/gu, (w) => w.charAt(0).toLocaleUpperCase("es") + w.slice(1));
 }
 
+
+type TicketTheme = {
+  id: string;
+  label: string;
+  count: number;
+  percentage: number;
+  examples: string[];
+};
+
+const TEXT_STOPWORDS = new Set(
+  [
+    // ES
+    "a", "al", "algo", "ante", "antes", "aqui", "asi", "bajo", "cada", "como", "con", "contra", "cual", "cuando",
+    "de", "del", "desde", "donde", "dos", "el", "ella", "ellas", "ellos", "en", "entre", "era", "es", "esa", "esas",
+    "ese", "eso", "esos", "esta", "estaba", "estado", "estan", "estar", "este", "esto", "estos", "fue", "ha", "hace",
+    "han", "hasta", "hay", "la", "las", "le", "les", "lo", "los", "mas", "me", "mi", "mis", "muy", "no", "nos", "o",
+    "para", "pero", "por", "porque", "que", "se", "sin", "sobre", "su", "sus", "te", "tiene", "tienen", "un", "una", "uno",
+    "unas", "unos", "y", "ya", "yo",
+    // EN
+    "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "can", "could", "did", "do", "does", "for", "from",
+    "had", "has", "have", "he", "her", "his", "how", "i", "if", "in", "into", "is", "it", "its", "me", "my", "no", "not",
+    "of", "on", "or", "our", "she", "so", "that", "the", "their", "them", "then", "there", "these", "they", "this", "to",
+    "was", "we", "were", "what", "when", "where", "which", "who", "why", "will", "with", "would", "you", "your",
+    // Genéricas del dominio soporte
+    "error", "errores", "problema", "problemas", "ticket", "tickets", "solicitud", "solicitudes", "cliente", "clientes",
+    "falla", "fallas", "fallo", "ayuda", "soporte", "consulta", "consultas", "caso", "casos", "incidencia", "incidencias",
+    "favor", "revisar", "revision", "requiere", "requerido", "janis", "care", "hd", "hdi", "adjunto", "adjunta", "gracias",
+    "urgente", "buen", "buenos", "buenas", "dia", "dias", "tarde", "tardes", "noche", "noches", "hola", "estimado", "estimada",
+  ].filter(Boolean)
+);
+
+const THEME_SYNONYMS: Record<string, string> = {
+  orden: "pedido",
+  ordenes: "pedido",
+  order: "pedido",
+  orders: "pedido",
+  compra: "pedido",
+  compras: "pedido",
+  carrito: "checkout",
+  checkout: "checkout",
+  generar: "crear",
+  genera: "crear",
+  generando: "crear",
+  creado: "crear",
+  crear: "crear",
+  creando: "crear",
+  creacion: "crear",
+  permite: "permitir",
+  permitir: "permitir",
+  publicacion: "publicar",
+  publicar: "publicar",
+  publicado: "publicar",
+  publicaciones: "publicar",
+  sku: "sku",
+  skus: "sku",
+  producto: "producto",
+  productos: "producto",
+  item: "producto",
+  items: "producto",
+  envio: "envio",
+  envios: "envio",
+  carrier: "carrier",
+  carriers: "carrier",
+  despacho: "envio",
+  despachos: "envio",
+  integracion: "integracion",
+  integration: "integracion",
+  api: "api",
+  factura: "facturacion",
+  facturas: "facturacion",
+  facturacion: "facturacion",
+  documento: "documento",
+  documentos: "documento",
+  boleta: "documento",
+  boletas: "documento",
+  pago: "pago",
+  pagos: "pago",
+  payment: "pago",
+  payments: "pago",
+  stock: "stock",
+  inventario: "stock",
+  inventory: "stock",
+  precio: "precio",
+  precios: "precio",
+  promociones: "promocion",
+  promocion: "promocion",
+  usuario: "usuario",
+  usuarios: "usuario",
+  login: "login",
+  acceso: "login",
+};
+
+const THEME_LABEL_RULES: Array<{ label: string; tokens: string[] }> = [
+  { label: "Problemas al crear pedidos", tokens: ["pedido", "crear", "checkout", "permitir"] },
+  { label: "Integración / API envíos", tokens: ["integracion", "api", "envio", "carrier"] },
+  { label: "Publicación SKUs/productos", tokens: ["publicar", "sku", "producto", "catalogo"] },
+  { label: "Facturación / documentos", tokens: ["facturacion", "documento", "boleta", "invoice"] },
+  { label: "Pagos / checkout", tokens: ["pago", "checkout", "transaccion", "payment"] },
+  { label: "Stock / inventario", tokens: ["stock", "inventario", "disponibilidad"] },
+  { label: "Precios / promociones", tokens: ["precio", "promocion", "descuento"] },
+  { label: "Usuarios / accesos", tokens: ["usuario", "login", "acceso", "permiso"] },
+];
+
+function normalizeThemeToken(token: string) {
+  const t = String(token || "")
+    .toLocaleLowerCase("es")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+
+  if (!t || t.length < 3 || TEXT_STOPWORDS.has(t) || /^\d+$/.test(t)) return "";
+  if (THEME_SYNONYMS[t]) return THEME_SYNONYMS[t];
+
+  let stem = t;
+  for (const suffix of ["mente", "aciones", "acion", "iciones", "icion", "amiento", "imientos", "imiento", "ando", "iendo", "ados", "adas", "idos", "idas", "es", "s"]) {
+    if (stem.length > suffix.length + 3 && stem.endsWith(suffix)) {
+      stem = stem.slice(0, -suffix.length);
+      break;
+    }
+  }
+  return THEME_SYNONYMS[stem] || stem;
+}
+
+function tokenizeThemeText(text: string) {
+  const rawTokens = String(text || "")
+    .toLocaleLowerCase("es")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map(normalizeThemeToken)
+    .filter(Boolean);
+
+  const features = [...rawTokens];
+  for (let i = 0; i < rawTokens.length - 1; i += 1) {
+    const a = rawTokens[i];
+    const b = rawTokens[i + 1];
+    if (a !== b) features.push(`${a}_${b}`);
+  }
+  return features;
+}
+
+function cosineSimilarity(a: Map<string, number>, b: Map<string, number>) {
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+
+  a.forEach((v, k) => {
+    normA += v * v;
+    dot += v * (b.get(k) || 0);
+  });
+  b.forEach((v) => {
+    normB += v * v;
+  });
+
+  if (!normA || !normB) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+function compactSnippet(text: string) {
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 82);
+}
+
+function titleForTheme(tokenScores: Map<string, number>) {
+  const tokenList = Array.from(tokenScores.entries())
+    .filter(([token]) => !token.includes("_"))
+    .sort((a, b) => b[1] - a[1]);
+  const tokenSet = new Set(tokenList.slice(0, 12).map(([token]) => token));
+
+  const matchingRule = THEME_LABEL_RULES.map((rule) => ({
+    rule,
+    score: rule.tokens.reduce((sum, token) => sum + (tokenSet.has(token) ? 1 : 0), 0),
+  }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)[0];
+
+  if (matchingRule && matchingRule.score >= 2) return matchingRule.rule.label;
+
+  const words = tokenList.slice(0, 3).map(([token]) => token.replace(/_/g, " "));
+  return words.length ? toTitleCaseWords(words.join(" / ")) : "Tema recurrente";
+}
+
+type ThemeDoc = {
+  tokens: string[];
+  tokenSet: Set<string>;
+  summary: string;
+};
+
+function buildKeywordFallbackThemes(docs: ThemeDoc[], totalTickets: number, limit: number) {
+  const tokenDocs = new Map<string, Set<number>>();
+  docs.forEach((doc, docIndex) => {
+    doc.tokenSet.forEach((token) => {
+      if (!token.includes("_")) {
+        if (!tokenDocs.has(token)) tokenDocs.set(token, new Set());
+        tokenDocs.get(token)?.add(docIndex);
+      }
+    });
+  });
+
+  const candidates = Array.from(tokenDocs.entries())
+    .map(([token, docIndexes]) => ({ token, docIndexes, count: docIndexes.size }))
+    .filter((candidate) => candidate.count >= 2 && candidate.count <= Math.max(2, docs.length * 0.85))
+    .map((candidate) => ({
+      ...candidate,
+      score: candidate.count * Math.log(1 + docs.length / candidate.count),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(20, limit * 8));
+
+  return candidates
+    .map((candidate, index) => {
+      const tokenScores = new Map<string, number>();
+      const examples: string[] = [];
+      candidate.docIndexes.forEach((docIndex) => {
+        const doc = docs[docIndex];
+        doc.tokenSet.forEach((token) => {
+          if (!token.includes("_")) tokenScores.set(token, (tokenScores.get(token) || 0) + 1);
+        });
+        if (doc.summary && !examples.includes(doc.summary) && examples.length < 3) examples.push(doc.summary);
+      });
+
+      return {
+        id: `keyword-theme-${index + 1}`,
+        label: titleForTheme(tokenScores),
+        count: candidate.count,
+        percentage: totalTickets ? (candidate.count / totalTickets) * 100 : 0,
+        examples,
+      };
+    })
+    .filter((theme, index, arr) => arr.findIndex((x) => x.label === theme.label) === index)
+    .slice(0, limit);
+}
+
+export function analyzeTopTicketThemes(tickets: Row[], limit = 5): TicketTheme[] {
+  const docs = tickets
+    .map((ticket) => {
+      const text = `${ticket.resumen || ""} ${ticket.descripcion || ""}`.trim();
+      const tokens = tokenizeThemeText(text);
+      const summary = compactSnippet(ticket.resumen || ticket.descripcion || ticket.key || "Ticket sin resumen");
+      return { tokens, tokenSet: new Set(tokens), summary };
+    })
+    .filter((doc) => doc.tokens.length >= 2);
+
+  if (docs.length < 3) return [];
+
+  const documentFrequency = new Map<string, number>();
+  docs.forEach((doc) => {
+    new Set(doc.tokens).forEach((token) => documentFrequency.set(token, (documentFrequency.get(token) || 0) + 1));
+  });
+
+  const vectors = docs.map((doc) => {
+    const counts = new Map<string, number>();
+    doc.tokens.forEach((token) => counts.set(token, (counts.get(token) || 0) + 1));
+    const weighted = Array.from(counts.entries())
+      .map(([token, count]) => {
+        const df = documentFrequency.get(token) || 1;
+        const idf = Math.log(1 + docs.length / df);
+        const isBigram = token.includes("_");
+        const isKnownTopic = THEME_LABEL_RULES.some((rule) => rule.tokens.includes(token));
+        const tooCommon = df > docs.length * 0.82 && !isKnownTopic;
+        if (tooCommon) return null;
+        const topicBoost = isKnownTopic ? 1.35 : 1;
+        return [token, (1 + Math.log(count)) * (0.45 + idf) * (isBigram ? 1.12 : 1) * topicBoost] as [string, number];
+      })
+      .filter(Boolean) as Array<[string, number]>;
+
+    const byWeight = [...weighted].sort((a, b) => b[1] - a[1]).slice(0, 30);
+    const byFrequency = [...weighted]
+      .sort((a, b) => (documentFrequency.get(b[0]) || 0) - (documentFrequency.get(a[0]) || 0))
+      .slice(0, 12);
+    const merged = new Map<string, number>();
+    [...byWeight, ...byFrequency].forEach(([token, value]) => merged.set(token, Math.max(merged.get(token) || 0, value)));
+    const compact = Array.from(merged.entries()).slice(0, 42);
+    return new Map(compact);
+  });
+
+  type Cluster = {
+    docIndexes: number[];
+    centroid: Map<string, number>;
+    tokenScores: Map<string, number>;
+    examples: string[];
+  };
+
+  const rebuildCentroid = (cluster: Cluster) => {
+    const centroid = new Map<string, number>();
+    const tokenScores = new Map<string, number>();
+    cluster.docIndexes.forEach((docIndex) => {
+      vectors[docIndex].forEach((value, token) => {
+        centroid.set(token, (centroid.get(token) || 0) + value);
+        tokenScores.set(token, (tokenScores.get(token) || 0) + value);
+      });
+    });
+    centroid.forEach((value, token) => centroid.set(token, value / cluster.docIndexes.length));
+    cluster.centroid = centroid;
+    cluster.tokenScores = tokenScores;
+  };
+
+  const clusters: Cluster[] = [];
+  docs.forEach((_doc, docIndex) => {
+    const vector = vectors[docIndex];
+    let bestClusterIndex = -1;
+    let bestScore = 0;
+
+    clusters.forEach((cluster, clusterIndex) => {
+      const score = cosineSimilarity(vector, cluster.centroid);
+      if (score > bestScore) {
+        bestScore = score;
+        bestClusterIndex = clusterIndex;
+      }
+    });
+
+    if (bestClusterIndex >= 0 && bestScore >= 0.18) {
+      const cluster = clusters[bestClusterIndex];
+      cluster.docIndexes.push(docIndex);
+      if (docs[docIndex].summary && !cluster.examples.includes(docs[docIndex].summary) && cluster.examples.length < 3) {
+        cluster.examples.push(docs[docIndex].summary);
+      }
+      rebuildCentroid(cluster);
+    } else {
+      const cluster: Cluster = {
+        docIndexes: [docIndex],
+        centroid: new Map(vector),
+        tokenScores: new Map(vector),
+        examples: docs[docIndex].summary ? [docs[docIndex].summary] : [],
+      };
+      clusters.push(cluster);
+    }
+  });
+
+  let didMerge = true;
+  while (didMerge) {
+    didMerge = false;
+    for (let i = 0; i < clusters.length; i += 1) {
+      for (let j = i + 1; j < clusters.length; j += 1) {
+        if (cosineSimilarity(clusters[i].centroid, clusters[j].centroid) >= 0.28) {
+          clusters[i].docIndexes.push(...clusters[j].docIndexes);
+          clusters[j].examples.forEach((example) => {
+            if (example && !clusters[i].examples.includes(example) && clusters[i].examples.length < 3) clusters[i].examples.push(example);
+          });
+          rebuildCentroid(clusters[i]);
+          clusters.splice(j, 1);
+          didMerge = true;
+          break;
+        }
+      }
+      if (didMerge) break;
+    }
+  }
+
+  const clusteredThemes = clusters
+    .filter((cluster) => cluster.docIndexes.length >= 2)
+    .sort((a, b) => b.docIndexes.length - a.docIndexes.length)
+    .slice(0, limit)
+    .map((cluster, index) => ({
+      id: `theme-${index + 1}`,
+      label: titleForTheme(cluster.tokenScores),
+      count: cluster.docIndexes.length,
+      percentage: (cluster.docIndexes.length / tickets.length) * 100,
+      examples: cluster.examples.slice(0, 3),
+    }));
+
+  if (clusteredThemes.length >= limit) return clusteredThemes;
+
+  const fallbackThemes = buildKeywordFallbackThemes(docs, tickets.length, limit);
+  const seenLabels = new Set(clusteredThemes.map((theme) => theme.label));
+  const mergedThemes = [...clusteredThemes];
+  fallbackThemes.forEach((theme) => {
+    if (!seenLabels.has(theme.label) && mergedThemes.length < limit) {
+      seenLabels.add(theme.label);
+      mergedThemes.push({ ...theme, id: `theme-${mergedThemes.length + 1}` });
+    }
+  });
+
+  return mergedThemes;
+}
+
 function getField(row: Record<string, any>, candidates: string[]) {
   for (const c of candidates) {
     const v = row[c];
@@ -687,6 +1066,77 @@ function HealthBadge({ label, color }: { label: string; color: string }) {
   );
 }
 
+function TopTicketThemesCard({
+  themes,
+  totalTickets,
+  isLoading = false,
+}: {
+  themes: TicketTheme[];
+  totalTickets: number;
+  isLoading?: boolean;
+}) {
+  return (
+    <Card className={UI.card + " md:col-span-3"}>
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <CardTitle className={UI.title}>Top 5 temas más repetidos</CardTitle>
+            <p className="mt-1 text-xs text-slate-500">
+              Análisis automático basado en Resumen + Descripción de tickets filtrados.
+            </p>
+          </div>
+          <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
+            {formatInt(totalTickets)} tickets
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+            Analizando temas de tickets...
+          </div>
+        ) : themes.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+            No hay tickets suficientes para analizar temas.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-5">
+            {themes.map((theme, index) => (
+              <div
+                key={theme.id}
+                className="min-w-0 rounded-lg border border-slate-100 bg-slate-50/70 p-2.5 transition-colors hover:bg-blue-50/60"
+              >
+                <div className="flex items-start gap-2">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[11px] font-bold text-white">
+                    {index + 1}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold leading-snug text-slate-800" title={theme.label}>
+                      {theme.label}
+                    </div>
+                    <div className="mt-1 text-[11px] font-medium text-blue-700">
+                      {formatInt(theme.count)} tickets · {theme.percentage.toFixed(1)}%
+                    </div>
+                  </div>
+                </div>
+                {theme.examples.length ? (
+                  <ul className="mt-2 space-y-1 text-[11px] leading-snug text-slate-500">
+                    {theme.examples.slice(0, 3).map((example) => (
+                      <li key={example} className="truncate" title={example}>
+                        • “{example}”
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function YearBars({
   rows,
   maxTickets,
@@ -787,10 +1237,35 @@ function runParserTestsOnce() {
   const arr: string[] = [];
   const min = arr.length ? arr[0] : undefined;
   console.assert(min === undefined, "safe min when empty");
+
+  const baseThemeRow = {
+    key: "TEST-1",
+    organization: "Test",
+    estado: "Abierto",
+    asignado: "Agent",
+    linkedKeys: [],
+    creada: new Date(2026, 0, 1),
+    year: 2026,
+    month: "2026-01",
+    slaResponseHours: null,
+    slaResponseStatus: "Cumplido" as const,
+    satisfaction: null,
+  };
+  const sampleThemes = analyzeTopTicketThemes(
+    [
+      { ...baseThemeRow, key: "TEST-1", resumen: "Error al crear orden", descripcion: "" },
+      { ...baseThemeRow, key: "TEST-2", resumen: "No permite generar pedido", descripcion: "" },
+      { ...baseThemeRow, key: "TEST-3", resumen: "Problema creando compra", descripcion: "" },
+    ],
+    1
+  );
+  console.assert(sampleThemes[0]?.count === 3, "theme analysis should group semantically similar order creation tickets");
 }
 
 type Row = {
   key: string;
+  resumen: string;
+  descripcion: string;
   organization: string;
   estado: string;
   asignado: string;
@@ -1090,6 +1565,8 @@ export default function JiraExecutiveDashboard() {
 
             parsed.push({
               key: String(coalesce(r["clave de incidencia"], coalesce(r["key"], ""))).trim(),
+              resumen: String(coalesce(getField(r, ["resumen", "summary", "título", "titulo", "title", "asunto", "subject"]), "")).trim(),
+              descripcion: String(coalesce(getField(r, ["descripción", "descripcion", "description", "descripción completa", "descripcion completa", "description full"]), "")).trim(),
               organization: org,
               estado,
               asignado: String(coalesce(r["persona asignada"], "")).trim(),
@@ -1238,6 +1715,8 @@ export default function JiraExecutiveDashboard() {
       return true;
     });
   }, [janisRows, fromMonth, toMonth, overlapRange, orgFilter]);
+
+  const topTicketThemes = useMemo(() => analyzeTopTicketThemes(filtered, 5), [filtered]);
 
   const comparisonPeriods = useMemo(() => {
     const filterStart = fromMonth === "all" ? autoRange.minMonth || null : fromMonth;
@@ -2280,9 +2759,7 @@ export default function JiraExecutiveDashboard() {
               </KpiPreviousPeriod>
             </CardContent>
           </Card>
-          {kpiCard("Janis Card 3", "—", "Próximamente", undefined, undefined, noPreviousPeriodData)}
-          {kpiCard("Janis Card 4", "—", "Próximamente", undefined, undefined, noPreviousPeriodData)}
-          {kpiCard("Janis Card 5", "—", "Próximamente", undefined, undefined, noPreviousPeriodData)}
+          <TopTicketThemesCard themes={topTicketThemes} totalTickets={filtered.length} />
         </div>
 
         {ticketsPer1kTrend.length >= 2 ? (
