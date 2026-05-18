@@ -248,27 +248,33 @@ function escapeHtml(s: any) {
     .replace(/'/g, "&#039;");
 }
 
+const MONTH_SHORT_NAMES = [
+  "Ene",
+  "Feb",
+  "Mar",
+  "Abr",
+  "May",
+  "Jun",
+  "Jul",
+  "Ago",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dic",
+];
+
+function monthShortName(m: string) {
+  if (!m || !m.includes("-")) return m;
+  const [, mm] = m.split("-");
+  const idx = Number(mm) - 1;
+  return idx >= 0 && idx < MONTH_SHORT_NAMES.length ? MONTH_SHORT_NAMES[idx] : mm;
+}
+
 function monthLabel(m: string) {
   // m = YYYY-MM
   if (!m || !m.includes("-")) return m;
-  const [y, mm] = m.split("-");
-  const names = [
-    "Ene",
-    "Feb",
-    "Mar",
-    "Abr",
-    "May",
-    "Jun",
-    "Jul",
-    "Ago",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dic",
-  ];
-  const idx = Number(mm) - 1;
-  const n = idx >= 0 && idx < 12 ? names[idx] : mm;
-  return `${n} ${y}`;
+  const [y] = m.split("-");
+  return `${monthShortName(m)} ${y}`;
 }
 
 function toTitleCaseWords(s: string) {
@@ -1017,12 +1023,7 @@ function buildPeriodKpis(periodRows: Row[], periodJanisRows: JanisRow[]) {
 
 
 function KpiPreviousPeriod({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mt-3 border-t border-slate-100 pt-2 text-xs text-slate-500">
-      <div className="font-semibold text-slate-600">Comparativa interanual</div>
-      <div className="mt-0.5">{children}</div>
-    </div>
-  );
+  return <div className="mt-3 border-t border-slate-100 pt-2 text-xs text-slate-500">{children}</div>;
 }
 
 function kpiCard(
@@ -1347,9 +1348,27 @@ function buildComparisonPeriods(selectedPeriod: MonthPeriod): ComparisonPeriods 
   };
 }
 
-function periodLabel(period: MonthPeriod) {
+function periodYear(period: MonthPeriod) {
+  return period.start ? period.start.slice(0, 4) : null;
+}
+
+function interannualMonthRangeLabel(period: MonthPeriod) {
   if (!period.start || !period.end) return null;
-  return `${monthLabel(period.start)} – ${monthLabel(period.end)}`;
+  const startLabel = monthShortName(period.start);
+  const endLabel = monthShortName(period.end);
+  return startLabel === endLabel ? startLabel : `${startLabel}-${endLabel}`;
+}
+
+type MetricPerformanceDirection = "higher-is-better" | "lower-is-better" | "neutral";
+
+function metricPerformanceClass(
+  current: number | null,
+  previous: number | null,
+  direction: MetricPerformanceDirection
+) {
+  if (direction === "neutral" || current == null || previous == null || current === previous) return "metric-neutral";
+  const isBetter = direction === "higher-is-better" ? current > previous : current < previous;
+  return isBetter ? "metric-better" : "metric-worse";
 }
 
 function isNormalSchedule(d: Date) {
@@ -1900,32 +1919,43 @@ export default function JiraExecutiveDashboard() {
   ]);
 
   const noPreviousPeriodData = "Sin datos del periodo anterior";
-  const comparisonCurrentRangeLabel = periodLabel(comparisonPeriods.comparisonCurrentPeriod);
-  const comparisonPreviousRangeLabel = periodLabel(comparisonPeriods.comparisonPreviousPeriod);
+  const interannualRangeLabel = interannualMonthRangeLabel(comparisonPeriods.comparisonCurrentPeriod);
+  const comparisonCurrentYear = periodYear(comparisonPeriods.comparisonCurrentPeriod);
+  const comparisonPreviousYear = periodYear(comparisonPeriods.comparisonPreviousPeriod);
 
-  const renderJiraComparison = (
-    hasCurrentValue: boolean,
-    renderCurrent: () => React.ReactNode,
-    hasPreviousValue: boolean,
-    renderPrevious: () => React.ReactNode
-  ) => (
-    <>
-      {comparisonCurrentRangeLabel && hasCurrentValue ? (
-        <>
-          <div>{comparisonCurrentRangeLabel}</div>
-          {renderCurrent()}
-        </>
-      ) : null}
-      {comparisonPreviousRangeLabel && hasPreviousValue ? (
-        <>
-          <div className="mt-2">Mismo periodo año anterior: {comparisonPreviousRangeLabel}</div>
-          {renderPrevious()}
-        </>
-      ) : (
-        <div className="mt-2">{noPreviousPeriodData}</div>
-      )}
-    </>
-  );
+  const renderInterannualComparison = (args: {
+    hasCurrentValue: boolean;
+    currentValue: React.ReactNode;
+    currentMetricValue: number | null;
+    hasPreviousValue: boolean;
+    previousValue: React.ReactNode;
+    previousMetricValue: number | null;
+    direction: MetricPerformanceDirection;
+  }) => {
+    const currentClass = metricPerformanceClass(
+      args.currentMetricValue,
+      args.hasPreviousValue ? args.previousMetricValue : null,
+      args.direction
+    );
+
+    return (
+      <div className="interannual-comparison">
+        {interannualRangeLabel ? <div className="interannual-title">Interanual {interannualRangeLabel}:</div> : null}
+        {comparisonCurrentYear && args.hasCurrentValue ? (
+          <div className={currentClass}>
+            - {comparisonCurrentYear}: {args.currentValue}
+          </div>
+        ) : null}
+        {comparisonPreviousYear && args.hasPreviousValue ? (
+          <div className="metric-neutral">
+            - {comparisonPreviousYear}: {args.previousValue}
+          </div>
+        ) : (
+          <div className="metric-neutral">{noPreviousPeriodData}</div>
+        )}
+      </div>
+    );
+  };
 
   const series = useMemo(() => {
     // Tickets vs Órdenes por mes
@@ -2376,8 +2406,7 @@ export default function JiraExecutiveDashboard() {
               Janis Commerce -  Care Executive Dashboard
             </h1>
             <p className="text-sm text-slate-500 mt-1">
-              Sube tu CSV y verás KPIs y gráficos. Regla SLA Response (Time to first response): &gt;= 0 (o vacío) =
-              cumplido; &lt; 0 = incumplido. Dotación: 5 (Jun-2024 a Jun-2025), 3 (Jul-2025+).
+              Sube tu CSV de Jira y de Janis (order-report) para visualizar
             </p>
           </div>
 
@@ -2498,7 +2527,7 @@ export default function JiraExecutiveDashboard() {
 
         {/* Filters */}
         <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-5">
-          <Card className={UI.card}>
+          <Card className={`${UI.card} date-filter-highlight`}>
             <CardContent className="p-4">
               <div className={UI.subtle}>Desde (mes)</div>
               <Input
@@ -2510,7 +2539,7 @@ export default function JiraExecutiveDashboard() {
               />
             </CardContent>
           </Card>
-          <Card className={UI.card}>
+          <Card className={`${UI.card} date-filter-highlight`}>
             <CardContent className="p-4">
               <div className={UI.subtle}>Hasta (mes)</div>
               <Input
@@ -2592,24 +2621,15 @@ export default function JiraExecutiveDashboard() {
             </>,
             undefined,
             undefined,
-            renderJiraComparison(
-              comparisonKpis.current.hasJiraPeriodData,
-              () => (
-                <>
-                  <div className="font-semibold text-slate-700">{formatInt(comparisonKpis.current.total)} tickets</div>
-                  <div>Horario Normal: {formatInt(comparisonKpis.current.totalNormal)}</div>
-                  <div>Horario Guardia: {formatInt(comparisonKpis.current.totalGuard)}</div>
-                </>
-              ),
-              comparisonKpis.previous.hasJiraPeriodData,
-              () => (
-                <>
-                  <div className="font-semibold text-slate-700">{formatInt(comparisonKpis.previous.total)} tickets</div>
-                  <div>Horario Normal: {formatInt(comparisonKpis.previous.totalNormal)}</div>
-                  <div>Horario Guardia: {formatInt(comparisonKpis.previous.totalGuard)}</div>
-                </>
-              )
-            )
+            renderInterannualComparison({
+              hasCurrentValue: comparisonKpis.current.hasJiraPeriodData,
+              currentValue: `${formatInt(comparisonKpis.current.total)} tickets`,
+              currentMetricValue: comparisonKpis.current.total,
+              hasPreviousValue: comparisonKpis.previous.hasJiraPeriodData,
+              previousValue: `${formatInt(comparisonKpis.previous.total)} tickets`,
+              previousMetricValue: comparisonKpis.previous.total,
+              direction: "lower-is-better",
+            })
           )}
           {kpiCard(
             "HDI Vinculados",
@@ -2620,24 +2640,15 @@ export default function JiraExecutiveDashboard() {
             </>,
             undefined,
             undefined,
-            renderJiraComparison(
-              comparisonKpis.current.hasJiraPeriodData,
-              () => (
-                <>
-                  <div className="font-semibold text-slate-700">{formatInt(comparisonKpis.current.linkedTickets)} HDI</div>
-                  <div>Horario Normal: {formatInt(comparisonKpis.current.linkedNormal)}</div>
-                  <div>Horario Guardia: {formatInt(comparisonKpis.current.linkedGuard)}</div>
-                </>
-              ),
-              comparisonKpis.previous.hasJiraPeriodData,
-              () => (
-                <>
-                  <div className="font-semibold text-slate-700">{formatInt(comparisonKpis.previous.linkedTickets)} HDI</div>
-                  <div>Horario Normal: {formatInt(comparisonKpis.previous.linkedNormal)}</div>
-                  <div>Horario Guardia: {formatInt(comparisonKpis.previous.linkedGuard)}</div>
-                </>
-              )
-            )
+            renderInterannualComparison({
+              hasCurrentValue: comparisonKpis.current.hasJiraPeriodData,
+              currentValue: `${formatInt(comparisonKpis.current.linkedTickets)} HDI`,
+              currentMetricValue: comparisonKpis.current.linkedTickets,
+              hasPreviousValue: comparisonKpis.previous.hasJiraPeriodData,
+              previousValue: `${formatInt(comparisonKpis.previous.linkedTickets)} HDI`,
+              previousMetricValue: comparisonKpis.previous.linkedTickets,
+              direction: "lower-is-better",
+            })
           )}
           {kpiCard(
             "Cumplimiento SLA Response",
@@ -2645,22 +2656,15 @@ export default function JiraExecutiveDashboard() {
             `${formatInt(kpis.respInc)} incumplidos`,
             undefined,
             undefined,
-            renderJiraComparison(
-              comparisonKpis.current.hasJiraPeriodData,
-              () => (
-                <>
-                  <div className="font-semibold text-slate-700">{formatPct(comparisonKpis.current.respOkPct)}</div>
-                  <div>{formatInt(comparisonKpis.current.respInc)} incumplidos</div>
-                </>
-              ),
-              comparisonKpis.previous.hasJiraPeriodData,
-              () => (
-                <>
-                  <div className="font-semibold text-slate-700">{formatPct(comparisonKpis.previous.respOkPct)}</div>
-                  <div>{formatInt(comparisonKpis.previous.respInc)} incumplidos</div>
-                </>
-              )
-            )
+            renderInterannualComparison({
+              hasCurrentValue: comparisonKpis.current.hasJiraPeriodData,
+              currentValue: formatPct(comparisonKpis.current.respOkPct),
+              currentMetricValue: comparisonKpis.current.respOkPct,
+              hasPreviousValue: comparisonKpis.previous.hasJiraPeriodData,
+              previousValue: formatPct(comparisonKpis.previous.respOkPct),
+              previousMetricValue: comparisonKpis.previous.respOkPct,
+              direction: "higher-is-better",
+            })
           )}
           {kpiCard(
             "CSAT promedio (por año)",
@@ -2668,22 +2672,15 @@ export default function JiraExecutiveDashboard() {
             `Cobertura: ${formatPct(kpis.csatCoverage)}`,
             undefined,
             undefined,
-            renderJiraComparison(
-              comparisonKpis.current.hasJiraPeriodData && comparisonKpis.current.csatAvg != null,
-              () => (
-                <>
-                  <div className="font-semibold text-slate-700">{comparisonKpis.current.csatAvg?.toFixed(2)}</div>
-                  <div>Cobertura: {formatPct(comparisonKpis.current.csatCoverage)}</div>
-                </>
-              ),
-              comparisonKpis.previous.hasJiraPeriodData && comparisonKpis.previous.csatAvg != null,
-              () => (
-                <>
-                  <div className="font-semibold text-slate-700">{comparisonKpis.previous.csatAvg?.toFixed(2)}</div>
-                  <div>Cobertura: {formatPct(comparisonKpis.previous.csatCoverage)}</div>
-                </>
-              )
-            )
+            renderInterannualComparison({
+              hasCurrentValue: comparisonKpis.current.hasJiraPeriodData && comparisonKpis.current.csatAvg != null,
+              currentValue: comparisonKpis.current.csatAvg?.toFixed(2),
+              currentMetricValue: comparisonKpis.current.csatAvg,
+              hasPreviousValue: comparisonKpis.previous.hasJiraPeriodData && comparisonKpis.previous.csatAvg != null,
+              previousValue: comparisonKpis.previous.csatAvg?.toFixed(2),
+              previousMetricValue: comparisonKpis.previous.csatAvg,
+              direction: "higher-is-better",
+            })
           )}
           {kpiCard(
             "Tickets / Persona (prom. 6 meses)",
@@ -2691,12 +2688,15 @@ export default function JiraExecutiveDashboard() {
             "(excluye mes actual si no está cerrado)",
             undefined,
             <HealthBadge label={kpis.tppHealth.label} color={kpis.tppHealth.color} />,
-            renderJiraComparison(
-              comparisonKpis.current.hasJiraPeriodData && comparisonKpis.current.tpp != null,
-              () => <div className="font-semibold text-slate-700">{comparisonKpis.current.tpp?.toFixed(1)}</div>,
-              comparisonKpis.previous.hasJiraPeriodData && comparisonKpis.previous.tpp != null,
-              () => <div className="font-semibold text-slate-700">{comparisonKpis.previous.tpp?.toFixed(1)}</div>
-            )
+            renderInterannualComparison({
+              hasCurrentValue: comparisonKpis.current.hasJiraPeriodData && comparisonKpis.current.tpp != null,
+              currentValue: comparisonKpis.current.tpp?.toFixed(1),
+              currentMetricValue: comparisonKpis.current.tpp,
+              hasPreviousValue: comparisonKpis.previous.hasJiraPeriodData && comparisonKpis.previous.tpp != null,
+              previousValue: comparisonKpis.previous.tpp?.toFixed(1),
+              previousMetricValue: comparisonKpis.previous.tpp,
+              direction: "lower-is-better",
+            })
           )}
         </div>
 
@@ -2707,12 +2707,15 @@ export default function JiraExecutiveDashboard() {
             "Filtrado por fecha y organización",
             undefined,
             undefined,
-            renderJiraComparison(
-              comparisonKpis.current.hasJanisPeriodData,
-              () => <div className="font-semibold text-slate-700">{formatInt(comparisonKpis.current.totalOrders)} órdenes</div>,
-              comparisonKpis.previous.hasJanisPeriodData,
-              () => <div className="font-semibold text-slate-700">{formatInt(comparisonKpis.previous.totalOrders)} órdenes</div>
-            )
+            renderInterannualComparison({
+              hasCurrentValue: comparisonKpis.current.hasJanisPeriodData,
+              currentValue: `${formatInt(comparisonKpis.current.totalOrders)} órdenes`,
+              currentMetricValue: comparisonKpis.current.totalOrders,
+              hasPreviousValue: comparisonKpis.previous.hasJanisPeriodData,
+              previousValue: `${formatInt(comparisonKpis.previous.totalOrders)} órdenes`,
+              previousMetricValue: comparisonKpis.previous.totalOrders,
+              direction: "neutral",
+            })
           )}
           <Card className={UI.card}>
             <CardHeader className="pb-2">
@@ -2728,34 +2731,27 @@ export default function JiraExecutiveDashboard() {
                 {janisKpis.ticketsPer1kOrders == null ? "—" : janisKpis.ticketsPer1kOrders.toFixed(2)}
               </div>
               <KpiPreviousPeriod>
-                {renderJiraComparison(
-                  comparisonKpis.current.hasJanisPeriodData &&
+                {renderInterannualComparison({
+                  hasCurrentValue:
+                    comparisonKpis.current.hasJanisPeriodData &&
                     comparisonKpis.current.hasJiraPeriodData &&
                     comparisonKpis.current.ticketsPer1kOrders != null,
-                  () => (
-                    <>
-                      <div className="font-semibold text-slate-700">
-                        {comparisonKpis.current.ordersPerTicketRounded == null
-                          ? "Sin tickets en el período"
-                          : `1 ticket cada ${formatInt(comparisonKpis.current.ordersPerTicketRounded)} órdenes`}
-                      </div>
-                      <div>{comparisonKpis.current.ticketsPer1kOrders?.toFixed(2)}</div>
-                    </>
-                  ),
-                  comparisonKpis.previous.hasJanisPeriodData &&
+                  currentValue:
+                    comparisonKpis.current.ordersPerTicketRounded == null
+                      ? "Sin tickets en el período"
+                      : `1 ticket cada ${formatInt(comparisonKpis.current.ordersPerTicketRounded)} órdenes (${comparisonKpis.current.ticketsPer1kOrders?.toFixed(2)})`,
+                  currentMetricValue: comparisonKpis.current.ticketsPer1kOrders,
+                  hasPreviousValue:
+                    comparisonKpis.previous.hasJanisPeriodData &&
                     comparisonKpis.previous.hasJiraPeriodData &&
                     comparisonKpis.previous.ticketsPer1kOrders != null,
-                  () => (
-                    <>
-                      <div className="font-semibold text-slate-700">
-                        {comparisonKpis.previous.ordersPerTicketRounded == null
-                          ? "Sin tickets en el período"
-                          : `1 ticket cada ${formatInt(comparisonKpis.previous.ordersPerTicketRounded)} órdenes`}
-                      </div>
-                      <div>{comparisonKpis.previous.ticketsPer1kOrders?.toFixed(2)}</div>
-                    </>
-                  )
-                )}
+                  previousValue:
+                    comparisonKpis.previous.ordersPerTicketRounded == null
+                      ? "Sin tickets en el período"
+                      : `1 ticket cada ${formatInt(comparisonKpis.previous.ordersPerTicketRounded)} órdenes (${comparisonKpis.previous.ticketsPer1kOrders?.toFixed(2)})`,
+                  previousMetricValue: comparisonKpis.previous.ticketsPer1kOrders,
+                  direction: "lower-is-better",
+                })}
               </KpiPreviousPeriod>
             </CardContent>
           </Card>
