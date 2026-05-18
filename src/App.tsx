@@ -545,12 +545,56 @@ function buildExecutiveReportHtml(args: {
   </html>`;
 }
 
+
+function filterRowsForPeriod(
+  sourceRows: Row[],
+  startMonth: string | null,
+  endMonth: string | null,
+  orgFilterValue: string,
+  assigneeFilterValue: string,
+  statusFilterValue: string
+) {
+  if (!startMonth || !endMonth) return [] as Row[];
+  return sourceRows.filter((r) => {
+    if (r.month < startMonth || r.month > endMonth) return false;
+    if (orgFilterValue !== "all" && normalizeOrgKey(r.organization) !== normalizeOrgKey(orgFilterValue)) return false;
+    if (assigneeFilterValue !== "all" && r.asignado !== assigneeFilterValue) return false;
+    if (statusFilterValue !== "all" && r.estado !== statusFilterValue) return false;
+    return true;
+  });
+}
+
+function filterJanisRowsForPeriod(
+  sourceRows: JanisRow[],
+  startMonth: string | null,
+  endMonth: string | null,
+  orgFilterValue: string
+) {
+  if (!startMonth || !endMonth) return [] as JanisRow[];
+  return sourceRows.filter((r) => {
+    if (r.month < startMonth || r.month > endMonth) return false;
+    if (orgFilterValue !== "all" && normalizeOrgKey(r.clientCode) !== normalizeOrgKey(orgFilterValue)) return false;
+    return true;
+  });
+}
+
+
+function KpiPreviousPeriod({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-2 text-xs text-slate-500">
+      <div className="font-semibold text-slate-600">Mismo período año anterior</div>
+      <div className="mt-0.5">{children}</div>
+    </div>
+  );
+}
+
 function kpiCard(
   title: string,
   value: any,
   subtitle?: React.ReactNode,
   right?: string,
-  badge?: React.ReactNode
+  badge?: React.ReactNode,
+  previousPeriod?: React.ReactNode
 ) {
   return (
     <Card className={UI.card}>
@@ -568,6 +612,7 @@ function kpiCard(
           </div>
           {right ? <div className={"text-right " + UI.subtle}>{right}</div> : null}
         </div>
+        {previousPeriod ? <KpiPreviousPeriod>{previousPeriod}</KpiPreviousPeriod> : null}
       </CardContent>
     </Card>
   );
@@ -1213,6 +1258,114 @@ export default function JiraExecutiveDashboard() {
       tppHealth,
     };
   }, [filtered]);
+
+  const previousYearPeriod = useMemo(() => {
+    const currentMonths = Array.from(new Set([...filtered.map((r) => r.month), ...janisFiltered.map((r) => r.month)])).sort();
+    const fallbackStart = fromMonth === "all" ? autoRange.minMonth || null : fromMonth;
+    const fallbackEnd = toMonth === "all" ? autoRange.maxMonth || null : toMonth;
+    const currentStart = currentMonths[0] || fallbackStart;
+    const currentEnd = currentMonths[currentMonths.length - 1] || fallbackEnd;
+    const previousStart = currentStart ? shiftYm(currentStart, -12) : null;
+    const previousEnd = currentEnd ? shiftYm(currentEnd, -12) : null;
+    return { currentStart, currentEnd, previousStart, previousEnd };
+  }, [filtered, janisFiltered, fromMonth, toMonth, autoRange]);
+
+  const previousYearKpis = useMemo(() => {
+    const previousRows = filterRowsForPeriod(
+      rows,
+      previousYearPeriod.previousStart,
+      previousYearPeriod.previousEnd,
+      orgFilter,
+      assigneeFilter,
+      statusFilter
+    );
+    const previousJanisRows = filterJanisRowsForPeriod(
+      janisRows,
+      previousYearPeriod.previousStart,
+      previousYearPeriod.previousEnd,
+      orgFilter
+    );
+
+    const hasJiraPeriodData = previousRows.length > 0;
+    const hasJanisPeriodData = previousJanisRows.length > 0;
+
+    const isNormalSchedule = (d: Date) => {
+      const day = d.getDay();
+      const hour = d.getHours();
+      const isWeekday = day >= 1 && day <= 5;
+      return isWeekday && hour >= 6 && hour < 23;
+    };
+
+    const total = previousRows.length;
+    const totalNormal = previousRows.filter((r) => isNormalSchedule(r.creada)).length;
+    const totalGuard = total - totalNormal;
+    const respInc = previousRows.filter((r) => r.slaResponseStatus === "Incumplido").length;
+
+    const rated = previousRows.filter((r) => r.satisfaction != null);
+    const csatAvg =
+      rated.length > 0
+        ? rated.reduce((sum, r) => sum + (r.satisfaction == null ? 0 : r.satisfaction), 0) / rated.length
+        : null;
+
+    const firstSeenByLinkedKey = new Map<string, Date>();
+    previousRows.forEach((r) => {
+      (r.linkedKeys || []).forEach((k) => {
+        if (!firstSeenByLinkedKey.has(k)) firstSeenByLinkedKey.set(k, r.creada);
+      });
+    });
+    const uniqueLinkedKeys = Array.from(firstSeenByLinkedKey.keys());
+    const linkedNormal = uniqueLinkedKeys.filter((k) => {
+      const d = firstSeenByLinkedKey.get(k);
+      return d ? isNormalSchedule(d) : false;
+    }).length;
+    const linkedGuard = uniqueLinkedKeys.length - linkedNormal;
+
+    const tppMonths = Array.from(new Set(previousRows.map((r) => r.month))).sort();
+    const tppValues = tppMonths
+      .map((m) => {
+        const team = teamSizeForMonth(m);
+        if (!team) return null;
+        return previousRows.filter((r) => r.month === m).length / team;
+      })
+      .filter((v): v is number => v != null);
+    const tpp = tppValues.length ? tppValues.reduce((sum, v) => sum + v, 0) / tppValues.length : null;
+
+    const totalOrders = previousJanisRows.reduce((acc, row) => acc + row.totalOrders, 0);
+    const ticketsPer1kOrders = totalOrders > 0 ? (previousRows.length / totalOrders) * 1000 : null;
+
+    return {
+      hasJiraPeriodData,
+      hasJanisPeriodData,
+      total,
+      totalNormal,
+      totalGuard,
+      linkedTickets: uniqueLinkedKeys.length,
+      linkedNormal,
+      linkedGuard,
+      respInc,
+      respOkPct: 100 - pct(respInc, total),
+      csatAvg,
+      csatCoverage: pct(rated.length, total),
+      tpp,
+      totalOrders,
+      ticketsPer1kOrders,
+      ordersPerTicketRounded: previousRows.length > 0 ? Math.round(totalOrders / previousRows.length) : null,
+    };
+  }, [
+    rows,
+    janisRows,
+    previousYearPeriod.previousStart,
+    previousYearPeriod.previousEnd,
+    orgFilter,
+    assigneeFilter,
+    statusFilter,
+  ]);
+
+  const noPreviousPeriodData = "Sin datos del periodo anterior";
+  const previousPeriodRangeLabel =
+    previousYearPeriod.previousStart && previousYearPeriod.previousEnd
+      ? `${monthLabel(previousYearPeriod.previousStart)} – ${monthLabel(previousYearPeriod.previousEnd)}`
+      : null;
 
   const series = useMemo(() => {
     // Tickets vs Órdenes por mes
@@ -1876,7 +2029,19 @@ export default function JiraExecutiveDashboard() {
             <>
               <div>Horario Normal: {formatInt(kpis.totalNormal)}</div>
               <div>Horario Guardia: {formatInt(kpis.totalGuard)}</div>
-            </>
+            </>,
+            undefined,
+            undefined,
+            previousYearKpis.hasJiraPeriodData ? (
+              <>
+                <div>{previousPeriodRangeLabel}</div>
+                <div className="font-semibold text-slate-700">{formatInt(previousYearKpis.total)} tickets</div>
+                <div>Horario Normal: {formatInt(previousYearKpis.totalNormal)}</div>
+                <div>Horario Guardia: {formatInt(previousYearKpis.totalGuard)}</div>
+              </>
+            ) : (
+              noPreviousPeriodData
+            )
           )}
           {kpiCard(
             "HDI Vinculados",
@@ -1884,24 +2049,66 @@ export default function JiraExecutiveDashboard() {
             <>
               <div>Horario Normal: {formatInt(kpis.linkedNormal)}</div>
               <div>Horario Guardia: {formatInt(kpis.linkedGuard)}</div>
-            </>
+            </>,
+            undefined,
+            undefined,
+            previousYearKpis.hasJiraPeriodData ? (
+              <>
+                <div>{previousPeriodRangeLabel}</div>
+                <div className="font-semibold text-slate-700">{formatInt(previousYearKpis.linkedTickets)} HDI</div>
+                <div>Horario Normal: {formatInt(previousYearKpis.linkedNormal)}</div>
+                <div>Horario Guardia: {formatInt(previousYearKpis.linkedGuard)}</div>
+              </>
+            ) : (
+              noPreviousPeriodData
+            )
           )}
           {kpiCard(
             "Cumplimiento SLA Response",
             formatPct(kpis.respOkPct),
-            `${formatInt(kpis.respInc)} incumplidos`
+            `${formatInt(kpis.respInc)} incumplidos`,
+            undefined,
+            undefined,
+            previousYearKpis.hasJiraPeriodData ? (
+              <>
+                <div>{previousPeriodRangeLabel}</div>
+                <div className="font-semibold text-slate-700">{formatPct(previousYearKpis.respOkPct)}</div>
+                <div>{formatInt(previousYearKpis.respInc)} incumplidos</div>
+              </>
+            ) : (
+              noPreviousPeriodData
+            )
           )}
           {kpiCard(
             "CSAT promedio (por año)",
             kpis.csatAvg == null ? "—" : kpis.csatAvg.toFixed(2),
-            `Cobertura: ${formatPct(kpis.csatCoverage)}`
+            `Cobertura: ${formatPct(kpis.csatCoverage)}`,
+            undefined,
+            undefined,
+            previousYearKpis.hasJiraPeriodData && previousYearKpis.csatAvg != null ? (
+              <>
+                <div>{previousPeriodRangeLabel}</div>
+                <div className="font-semibold text-slate-700">{previousYearKpis.csatAvg.toFixed(2)}</div>
+                <div>Cobertura: {formatPct(previousYearKpis.csatCoverage)}</div>
+              </>
+            ) : (
+              noPreviousPeriodData
+            )
           )}
           {kpiCard(
             "Tickets / Persona (prom. 6 meses)",
             kpis.tpp6m == null ? "—" : kpis.tpp6m.toFixed(1),
             "(excluye mes actual si no está cerrado)",
             undefined,
-            <HealthBadge label={kpis.tppHealth.label} color={kpis.tppHealth.color} />
+            <HealthBadge label={kpis.tppHealth.label} color={kpis.tppHealth.color} />,
+            previousYearKpis.hasJiraPeriodData && previousYearKpis.tpp != null ? (
+              <>
+                <div>{previousPeriodRangeLabel}</div>
+                <div className="font-semibold text-slate-700">{previousYearKpis.tpp.toFixed(1)}</div>
+              </>
+            ) : (
+              noPreviousPeriodData
+            )
           )}
         </div>
 
@@ -1909,7 +2116,17 @@ export default function JiraExecutiveDashboard() {
           {kpiCard(
             "Total Órdenes (Janis Data)",
             formatInt(janisKpis.totalOrders),
-            "Filtrado por fecha y organización"
+            "Filtrado por fecha y organización",
+            undefined,
+            undefined,
+            previousYearKpis.hasJanisPeriodData ? (
+              <>
+                <div>{previousPeriodRangeLabel}</div>
+                <div className="font-semibold text-slate-700">{formatInt(previousYearKpis.totalOrders)} órdenes</div>
+              </>
+            ) : (
+              noPreviousPeriodData
+            )
           )}
           <Card className={UI.card}>
             <CardHeader className="pb-2">
@@ -1924,11 +2141,28 @@ export default function JiraExecutiveDashboard() {
               <div className={"mt-1 text-sm font-medium text-slate-700"}>
                 {janisKpis.ticketsPer1kOrders == null ? "—" : janisKpis.ticketsPer1kOrders.toFixed(2)}
               </div>
+              <KpiPreviousPeriod>
+                {previousYearKpis.hasJanisPeriodData &&
+                previousYearKpis.hasJiraPeriodData &&
+                previousYearKpis.ticketsPer1kOrders != null ? (
+                  <>
+                    <div>{previousPeriodRangeLabel}</div>
+                    <div className="font-semibold text-slate-700">
+                      {previousYearKpis.ordersPerTicketRounded == null
+                        ? "Sin tickets en el período"
+                        : `1 ticket cada ${formatInt(previousYearKpis.ordersPerTicketRounded)} órdenes`}
+                    </div>
+                    <div>{previousYearKpis.ticketsPer1kOrders.toFixed(2)}</div>
+                  </>
+                ) : (
+                  noPreviousPeriodData
+                )}
+              </KpiPreviousPeriod>
             </CardContent>
           </Card>
-          {kpiCard("Janis Card 3", "—", "Próximamente")}
-          {kpiCard("Janis Card 4", "—", "Próximamente")}
-          {kpiCard("Janis Card 5", "—", "Próximamente")}
+          {kpiCard("Janis Card 3", "—", "Próximamente", undefined, undefined, noPreviousPeriodData)}
+          {kpiCard("Janis Card 4", "—", "Próximamente", undefined, undefined, noPreviousPeriodData)}
+          {kpiCard("Janis Card 5", "—", "Próximamente", undefined, undefined, noPreviousPeriodData)}
         </div>
 
         {ticketsPer1kTrend.length >= 2 ? (
