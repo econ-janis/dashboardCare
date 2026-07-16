@@ -526,7 +526,6 @@ function buildExecutiveReportHtml(args: {
             )
             .join("")}
         </div>
-        <ul>${executive.insights.map((i) => `<li>${f(i)}</li>`).join("")}</ul>
       </div>
 
       <div class="block">
