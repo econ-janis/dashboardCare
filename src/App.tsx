@@ -2574,10 +2574,7 @@ export default function JiraExecutiveDashboard() {
         <div className="mt-6">
           <Card className="rounded-xl border border-[#ff9f1a]/60 bg-gradient-to-br from-[#03133f] via-[#081d4d] to-[#1a2140] text-white shadow-lg shadow-[#020b26]/50">
             <CardHeader>
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <CardTitle className="text-base font-semibold text-white">
-                  Reporte Ejecutivo por Cliente (v1)
-                </CardTitle>
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-end">
                 <Button
                   className="self-start border border-orange-300/50 bg-gradient-to-r from-[#ff8f2b] to-[#ff7600] text-white shadow-sm shadow-[#ff7600]/40 hover:from-[#ff9c43] hover:to-[#ff8b1f]"
                   disabled={!filtered.length}
@@ -2586,10 +2583,6 @@ export default function JiraExecutiveDashboard() {
                   {showExecutiveReport ? executiveText.hide : executiveText.generate}
                 </Button>
               </div>
-              <p className="text-sm text-slate-200">
-                Enfoque en 4 bloques: Resumen Ejecutivo, Performance Operativa, Calidad/Impacto y Plan de Acción.
-                Vista simple, visual y comparativa vs mes anterior para decisiones rápidas.
-              </p>
             </CardHeader>
             <CardContent>
               {showExecutiveReport ? (
@@ -2697,15 +2690,6 @@ export default function JiraExecutiveDashboard() {
                       <div className="mb-1 font-semibold text-slate-100">4️⃣ {executiveText.actionPlan}</div>
                       <p className="text-xs">{executiveText.actionDesc}</p>
                     </div>
-                  </div>
-
-                  <div className="mt-4 rounded-lg border border-[#ff9f1a] bg-[#0d2558] p-3">
-                    <div className="text-sm font-semibold text-[#ff9f1a]">{executiveText.insightsTitle}</div>
-                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-200">
-                      {executiveReportData.insights.map((insight, idx) => (
-                        <li key={idx}>{insight}</li>
-                      ))}
-                    </ul>
                   </div>
                 </div>
               ) : null}
