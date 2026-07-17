@@ -25,6 +25,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  MultiSelect,
 } from "@/components/ui/select";
 
 /**
@@ -555,14 +556,18 @@ function filterRowsForPeriod(
   sourceRows: Row[],
   startMonth: string | null,
   endMonth: string | null,
-  orgFilterValue: string,
+  orgFilterValue: string[],
   assigneeFilterValue: string,
   statusFilterValue: string
 ) {
   if (!startMonth || !endMonth) return [] as Row[];
   return sourceRows.filter((r) => {
     if (r.month < startMonth || r.month > endMonth) return false;
-    if (orgFilterValue !== "all" && normalizeOrgKey(r.organization) !== normalizeOrgKey(orgFilterValue)) return false;
+    if (
+      orgFilterValue.length > 0 &&
+      !orgFilterValue.some((o) => normalizeOrgKey(r.organization) === normalizeOrgKey(o))
+    )
+      return false;
     if (assigneeFilterValue !== "all" && r.asignado !== assigneeFilterValue) return false;
     if (statusFilterValue !== "all" && r.estado !== statusFilterValue) return false;
     return true;
@@ -573,12 +578,16 @@ function filterJanisRowsForPeriod(
   sourceRows: JanisRow[],
   startMonth: string | null,
   endMonth: string | null,
-  orgFilterValue: string
+  orgFilterValue: string[]
 ) {
   if (!startMonth || !endMonth) return [] as JanisRow[];
   return sourceRows.filter((r) => {
     if (r.month < startMonth || r.month > endMonth) return false;
-    if (orgFilterValue !== "all" && normalizeOrgKey(r.clientCode) !== normalizeOrgKey(orgFilterValue)) return false;
+    if (
+      orgFilterValue.length > 0 &&
+      !orgFilterValue.some((o) => normalizeOrgKey(r.clientCode) === normalizeOrgKey(o))
+    )
+      return false;
     return true;
   });
 }
@@ -978,7 +987,7 @@ export default function JiraExecutiveDashboard() {
     maxMonth: null,
   });
 
-  const [orgFilter, setOrgFilter] = useState("all");
+  const [orgFilter, setOrgFilter] = useState<string[]>([]);
   const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [language, setLanguage] = useState<"es" | "pt">("es");
@@ -1233,7 +1242,7 @@ export default function JiraExecutiveDashboard() {
   }, [rows, janisRows]);
 
   const orgMatches = (candidate: string) =>
-    orgFilter === "all" || normalizeOrgKey(candidate) === normalizeOrgKey(orgFilter);
+    orgFilter.length === 0 || orgFilter.some((o) => normalizeOrgKey(candidate) === normalizeOrgKey(o));
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
@@ -2009,7 +2018,7 @@ export default function JiraExecutiveDashboard() {
                     filters: {
                       fromMonth: fromMonth === "all" ? autoRange.minMonth || "all" : fromMonth,
                       toMonth: toMonth === "all" ? autoRange.maxMonth || "all" : toMonth,
-                      org: orgFilter === "all" ? "Todas" : orgFilter,
+                      org: orgFilter.length === 0 ? "Todas" : orgFilter.join(", "),
                       assignee: assigneeFilter === "all" ? "Todos" : assigneeFilter,
                       status: statusFilter === "all" ? "Todos" : statusFilter,
                     },
@@ -2075,19 +2084,12 @@ export default function JiraExecutiveDashboard() {
           <Card className={UI.card}>
             <CardContent className="p-4">
               <div className={UI.subtle}>Organización</div>
-              <Select value={orgFilter} onValueChange={setOrgFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Todas" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas</SelectItem>
-                  {filterOptions.orgs.map((o) => (
-                    <SelectItem key={o} value={o}>
-                      {o}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MultiSelect
+                options={filterOptions.orgs}
+                selected={orgFilter}
+                onChange={setOrgFilter}
+                placeholder="Todas"
+              />
             </CardContent>
           </Card>
 
