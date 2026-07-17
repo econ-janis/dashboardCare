@@ -2591,7 +2591,7 @@ export default function JiraExecutiveDashboard() {
                   <div className="mb-3">
                     <div className="text-sm font-semibold text-white">1️⃣ Resumen Ejecutivo</div>
                     <div className="text-xs text-slate-300">
-                      {executiveReportData.monthLabel} vs {executiveReportData.prevMonthLabel}
+                      {executiveReportData.prevMonthLabel} vs {executiveReportData.monthLabel}
                     </div>
                   </div>
 
