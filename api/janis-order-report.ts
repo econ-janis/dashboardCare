@@ -36,25 +36,50 @@ function extractRows(body: any): JanisApiRow[] {
   return [];
 }
 
-// El endpoint no soporta paginación: valida estrictamente el query string
-// y rechaza con 400 cualquier parámetro que no espere (ej. "page"), por
-// eso NO se agrega. Devuelve todo el historial en una sola respuesta
-// (confirmado por el CSV de referencia, que ya traía ~1600 filas).
+// El endpoint pagina por HEADERS, no por query string: la query string se
+// valida estrictamente y rechaza con 400 cualquier parámetro no esperado
+// (confirmado con un 400 real al mandar "?page=1"). La app oficial
+// (app.janis.in) pagina mandando X-Janis-Page / X-Janis-Page-Size /
+// X-Janis-Totals como headers — replicamos ese mismo contrato acá.
+const PAGE_SIZE = 60;
+// Salvaguarda ante un loop inesperado: 200 páginas * 60 = 12.000 filas,
+// muy por encima del historial actual (~1600 filas).
+const MAX_PAGES = 200;
+
 async function fetchAllRows(authHeaders: Record<string, string>) {
   const url = `${JANIS_ORDER_REPORT_URL}?sortBy=dateCreated&sortDirection=desc`;
-  const upstream = await fetch(url, { headers: authHeaders });
+  const rows: JanisApiRow[] = [];
 
-  if (!upstream.ok) {
-    const detail = await upstream.text().catch(() => "");
-    throw new Error(
-      `Janis API respondió ${upstream.status} ${upstream.statusText}${
-        detail ? ` — ${detail.slice(0, 300)}` : ""
-      }`
-    );
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const upstream = await fetch(url, {
+      headers: {
+        ...authHeaders,
+        "X-Janis-Page": String(page),
+        "X-Janis-Page-Size": String(PAGE_SIZE),
+        "X-Janis-Totals": page === 1 ? "true" : "false",
+      },
+    });
+
+    if (!upstream.ok) {
+      const detail = await upstream.text().catch(() => "");
+      throw new Error(
+        `Janis API respondió ${upstream.status} ${upstream.statusText}${
+          detail ? ` — ${detail.slice(0, 300)}` : ""
+        }`
+      );
+    }
+
+    const body = await upstream.json();
+    const pageRows = extractRows(body);
+    rows.push(...pageRows);
+
+    // Sin contador de total confiable del lado de la API: cortamos cuando
+    // una página vuelve incompleta (o vacía), que es la señal de "última
+    // página" independientemente de cómo la API exponga (o no) el total.
+    if (pageRows.length < PAGE_SIZE) break;
   }
 
-  const body = await upstream.json();
-  return extractRows(body);
+  return rows;
 }
 
 export default async function handler(req: any, res: any) {
