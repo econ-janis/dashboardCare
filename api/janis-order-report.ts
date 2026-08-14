@@ -64,62 +64,28 @@ async function fetchAllRows(authHeaders: Record<string, string>) {
   const rows: JanisApiRow[] = [];
   let pagesFetched = 0;
 
-  // Pedido dedicado solo para conocer el total de registros: no usamos
-  // las filas que traiga esta respuesta particular, porque no hay
-  // garantía de que con X-Janis-Totals: true la página 1 devuelva el
-  // array completo de 60 filas (de hecho, esa fue la causa del bug
-  // anterior: el loop veía menos de 60 filas acá y cortaba pensando que
-  // ya era la última página). Leemos el total del header x-janis-total
-  // (expuesto explícitamente vía Access-Control-Expose-Headers) y, si no
-  // viene, de content-length dividido por PAGE_SIZE como aproximación.
-  const totalsProbe = await fetchPage(url, {
-    ...authHeaders,
-    "X-Janis-Page": "1",
-    "X-Janis-Page-Size": String(PAGE_SIZE),
-    "X-Janis-Totals": "true",
-  });
-  const totalHeader = Number(totalsProbe.headers.get("x-janis-total"));
-  const contentLength = Number(totalsProbe.headers.get("content-length"));
-  const totalRecords = Number.isFinite(totalHeader) && totalHeader > 0
-    ? totalHeader
-    : Number.isFinite(contentLength) && contentLength > 0
-      ? contentLength
-      : null;
-  await totalsProbe.json().catch(() => null); // drenar el body, no se usa
-
-  if (totalRecords) {
-    const totalPages = Math.min(Math.ceil(totalRecords / PAGE_SIZE), MAX_PAGES);
-    for (let page = 1; page <= totalPages; page++) {
-      const upstream = await fetchPage(url, {
-        ...authHeaders,
-        "X-Janis-Page": String(page),
-        "X-Janis-Page-Size": String(PAGE_SIZE),
-        "X-Janis-Totals": "false",
-      });
-      const body = await upstream.json();
-      rows.push(...extractRows(body));
-      pagesFetched += 1;
-    }
-  } else {
-    // Fallback si no hay ninguna señal de total: cortamos cuando una
-    // página vuelve incompleta (criterio anterior, menos preciso pero
-    // seguro).
-    for (let page = 1; page <= MAX_PAGES; page++) {
-      const upstream = await fetchPage(url, {
-        ...authHeaders,
-        "X-Janis-Page": String(page),
-        "X-Janis-Page-Size": String(PAGE_SIZE),
-        "X-Janis-Totals": "false",
-      });
-      const body = await upstream.json();
-      const pageRows = extractRows(body);
-      rows.push(...pageRows);
-      pagesFetched += 1;
-      if (pageRows.length < PAGE_SIZE) break;
-    }
+  // Criterio simple y confirmado: la API pagina de forma prolija (60
+  // filas por página, última página incompleta). Pedimos página 1, 2, 3…
+  // siempre con X-Janis-Totals: false, y cortamos apenas una página
+  // devuelve menos de PAGE_SIZE filas (o ninguna). Nada de sondear un
+  // "total" vía headers: content-length es el tamaño en bytes de la
+  // respuesta, no una cantidad de filas, y usarlo como tal daba números
+  // sin sentido (llegó a calcular 342 páginas de un total real de 27).
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const upstream = await fetchPage(url, {
+      ...authHeaders,
+      "X-Janis-Page": String(page),
+      "X-Janis-Page-Size": String(PAGE_SIZE),
+      "X-Janis-Totals": "false",
+    });
+    const body = await upstream.json();
+    const pageRows = extractRows(body);
+    rows.push(...pageRows);
+    pagesFetched += 1;
+    if (pageRows.length < PAGE_SIZE) break;
   }
 
-  return { rows, pagesFetched, totalRecords };
+  return { rows, pagesFetched };
 }
 
 export default async function handler(req: any, res: any) {
@@ -141,7 +107,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const { rows: rawRows, pagesFetched, totalRecords } = await fetchAllRows({
+    const { rows: rawRows, pagesFetched } = await fetchAllRows({
       "janis-client": JANIS_CLIENT,
       "janis-api-key": JANIS_API_KEY,
       "janis-api-secret": JANIS_API_SECRET,
@@ -183,7 +149,7 @@ export default async function handler(req: any, res: any) {
       // Diagnóstico: cuántas páginas se recorrieron y cuántas filas crudas
       // (antes del filtro de años) reportó la API — útil para detectar si
       // en algún momento vuelve a cortarse antes de tiempo.
-      meta: { pagesFetched, totalRecordsReportedByApi: totalRecords, rawRowCount: rawRows.length },
+      meta: { pagesFetched, rawRowCount: rawRows.length },
     });
   } catch (e: any) {
     res
