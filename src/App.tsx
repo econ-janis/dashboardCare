@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import {
   LineChart,
@@ -844,6 +844,31 @@ type JanisRow = {
   totalOrders: number;
 };
 
+// Compartida entre la carga manual de CSV y la carga automática desde la
+// API de Janis (mismo shape de fila en ambos casos).
+function mapJanisRawRows(raw: any[]): JanisRow[] {
+  const parsed: JanisRow[] = [];
+  for (const r of raw || []) {
+    const clientCode = String(coalesce(r?.clientCode, "")).trim();
+    const monthNum = Number(String(coalesce(r?.month, "")).trim());
+    const yearNum = Number(String(coalesce(r?.year, "")).trim());
+    const totalOrdersNum = Number(String(coalesce(r?.totalOrders, "")).trim());
+
+    if (!clientCode || !Number.isFinite(monthNum) || !Number.isFinite(yearNum) || !Number.isFinite(totalOrdersNum)) {
+      continue;
+    }
+    if (monthNum < 1 || monthNum > 12) continue;
+
+    parsed.push({
+      clientCode,
+      month: `${yearNum}-${String(monthNum).padStart(2, "0")}`,
+      year: yearNum,
+      totalOrders: totalOrdersNum,
+    });
+  }
+  return parsed;
+}
+
 function normalizeOrgKey(value: string) {
   return String(value || "")
     .trim()
@@ -1002,6 +1027,8 @@ export default function JiraExecutiveDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [showExecutiveReport, setShowExecutiveReport] = useState(false);
+  const [janisLoading, setJanisLoading] = useState(false);
+  const [janisLastFetched, setJanisLastFetched] = useState<Date | null>(null);
 
   // Filters: rango por mes (YYYY-MM)
   const [fromMonth, setFromMonth] = useState<string>("all");
@@ -1187,6 +1214,20 @@ export default function JiraExecutiveDashboard() {
     });
   };
 
+  const applyJanisRows = (parsed: JanisRow[]) => {
+    setJanisRows(parsed);
+    if (!rows.length && parsed.length) {
+      const months = Array.from(new Set(parsed.map((r) => r.month))).sort();
+      const minMonth = months[0];
+      const maxMonth = months[months.length - 1];
+      setAutoRange({ minMonth, maxMonth });
+      setFromMonth(minMonth);
+      setToMonth(maxMonth);
+    }
+  };
+
+  // Carga manual de CSV: se mantiene como respaldo por si la API de Janis
+  // no está disponible o se necesita analizar un export puntual.
   const onJanisFile = (file: File) => {
     setError(null);
     Papa.parse(file, {
@@ -1194,36 +1235,7 @@ export default function JiraExecutiveDashboard() {
       skipEmptyLines: true,
       complete: (res: any) => {
         try {
-          const parsed: JanisRow[] = [];
-          for (const raw of res.data || []) {
-            const clientCode = String(coalesce(raw?.clientCode, "")).trim();
-            const monthNum = Number(String(coalesce(raw?.month, "")).trim());
-            const yearNum = Number(String(coalesce(raw?.year, "")).trim());
-            const totalOrdersNum = Number(String(coalesce(raw?.totalOrders, "")).trim());
-
-            if (!clientCode || !Number.isFinite(monthNum) || !Number.isFinite(yearNum) || !Number.isFinite(totalOrdersNum)) {
-              continue;
-            }
-            if (monthNum < 1 || monthNum > 12) continue;
-
-            const month = `${yearNum}-${String(monthNum).padStart(2, "0")}`;
-            parsed.push({
-              clientCode,
-              month,
-              year: yearNum,
-              totalOrders: totalOrdersNum,
-            });
-          }
-
-          setJanisRows(parsed);
-          if (!rows.length && parsed.length) {
-            const months = Array.from(new Set(parsed.map((r) => r.month))).sort();
-            const minMonth = months[0];
-            const maxMonth = months[months.length - 1];
-            setAutoRange({ minMonth, maxMonth });
-            setFromMonth(minMonth);
-            setToMonth(maxMonth);
-          }
+          applyJanisRows(mapJanisRawRows(res.data || []));
         } catch (e: any) {
           setError((e && e.message) || "Error procesando Janis Data");
           setJanisRows([]);
@@ -1235,6 +1247,34 @@ export default function JiraExecutiveDashboard() {
       },
     });
   };
+
+  // Carga automática desde la API de Janis (proxy serverless en
+  // /api/janis-order-report). Arranca sola al montar el dashboard.
+  const loadJanisFromApi = async () => {
+    setJanisLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/janis-order-report");
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(
+          (body && body.error) || `Error ${res.status} consultando la API de Janis`
+        );
+      }
+      applyJanisRows(mapJanisRawRows((body && body.rows) || []));
+      setJanisLastFetched(new Date());
+    } catch (e: any) {
+      setError((e && e.message) || "No pude cargar Janis Data desde la API.");
+    } finally {
+      setJanisLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadJanisFromApi();
+    // Solo al montar: es la carga inicial automática.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filterOptions = useMemo(() => {
     const orgs = Array.from(
@@ -1969,7 +2009,14 @@ export default function JiraExecutiveDashboard() {
               Janis Commerce -  Care Executive Dashboard
             </h1>
             <p className="text-sm text-slate-500 mt-1">
-              Sube tu CSV de Jira y de Janis (order-report) para visualizar
+              Sube tu CSV de Jira. Janis Data (order-report) se carga automáticamente desde la API.
+            </p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {janisLoading
+                ? "Actualizando Janis Data desde la API…"
+                : janisLastFetched
+                ? `Janis Data actualizada: ${janisLastFetched.toLocaleString("es-AR")} · últimos 2 años`
+                : "Janis Data: sin datos de la API todavía."}
             </p>
           </div>
 
@@ -2020,8 +2067,18 @@ export default function JiraExecutiveDashboard() {
               onClick={() => {
                 janisFileInputRef.current?.click();
               }}
+              title="Cargar manualmente un CSV de Janis (respaldo si la API no está disponible)"
             >
-              Janis Data
+              Janis CSV (manual)
+            </Button>
+
+            <Button
+              variant="outline"
+              disabled={janisLoading}
+              onClick={loadJanisFromApi}
+              title="Volver a consultar la API de Janis (order-report)"
+            >
+              {janisLoading ? "Actualizando…" : "↻ Actualizar Janis"}
             </Button>
 
             <Button
