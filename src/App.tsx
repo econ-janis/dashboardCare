@@ -311,6 +311,31 @@ function pieTooltipFormatterFactory(
   };
 }
 
+// Dibuja el porcentaje directamente sobre cada porción de la torta.
+// Las porciones muy angostas (<4%) se omiten para no amontonar texto;
+// esos valores igual quedan disponibles en el tooltip y en la lista lateral.
+function renderPieSliceLabel(props: any) {
+  const { cx, cy, midAngle, innerRadius, outerRadius, percent } = props || {};
+  if (!percent || percent < 0.04) return null;
+  const RADIAN = Math.PI / 180;
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.6;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  return (
+    <text
+      x={x}
+      y={y}
+      fill="#ffffff"
+      textAnchor="middle"
+      dominantBaseline="central"
+      fontSize={11}
+      fontWeight={600}
+    >
+      {`${(percent * 100).toFixed(0)}%`}
+    </text>
+  );
+}
+
 async function exportExecutivePdfDirect(args: {
   html: string;
   filename: string;
@@ -1678,6 +1703,15 @@ export default function JiraExecutiveDashboard() {
     [series.topOrgsPie]
   );
 
+  const pieTotal = useMemo(
+    () =>
+      (series.topOrgsPie || []).reduce(
+        (s, x) => s + (Number(x.tickets) || 0),
+        0
+      ),
+    [series.topOrgsPie]
+  );
+
   const ticketsByYearBars = useMemo(() => {
     const items = series.ticketsVsOrdersByYear || [];
     const maxTickets = items.reduce((m, x) => Math.max(m, Number(x.tickets) || 0), 0);
@@ -2423,25 +2457,55 @@ export default function JiraExecutiveDashboard() {
             <CardHeader>
               <CardTitle className={UI.title}>Top 10 Organizaciones (torta) + Otros</CardTitle>
             </CardHeader>
-            <CardContent className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Tooltip formatter={pieTooltipFormatter as any} />
-                  <Pie
-                    data={series.topOrgsPie}
-                    dataKey="tickets"
-                    nameKey="name"
-                    outerRadius={100}
-                    innerRadius={45}
-                    paddingAngle={2}
-                  >
-                    {series.topOrgsPie.map((_, i) => (
-                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
+            <CardContent className="h-auto md:h-80">
+              <div className="flex h-full flex-col gap-3 md:flex-row md:items-center">
+                <div className="h-72 w-full shrink-0 md:h-full md:flex-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Tooltip formatter={pieTooltipFormatter as any} />
+                      <Pie
+                        data={series.topOrgsPie}
+                        dataKey="tickets"
+                        nameKey="name"
+                        outerRadius={95}
+                        innerRadius={50}
+                        paddingAngle={2}
+                        label={renderPieSliceLabel}
+                        labelLine={false}
+                      >
+                        {series.topOrgsPie.map((_, i) => (
+                          <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                        ))}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="flex w-full flex-col gap-1.5 overflow-y-auto md:h-full md:w-48 md:shrink-0">
+                  {series.topOrgsPie.map((entry, i) => {
+                    const pct = pieTotal
+                      ? ((Number(entry.tickets) || 0) / pieTotal) * 100
+                      : 0;
+                    return (
+                      <div
+                        key={entry.name}
+                        className="flex items-center justify-between gap-2 text-xs"
+                        title={entry.name}
+                      >
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }}
+                          />
+                          <span className="truncate text-slate-600">{entry.name}</span>
+                        </span>
+                        <span className="shrink-0 font-medium text-slate-700">
+                          {formatInt(entry.tickets)} ({pct.toFixed(1)}%)
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </CardContent>
           </Card>
 
