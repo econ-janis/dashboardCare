@@ -15,9 +15,6 @@
 //   JANIS_API_SECRET
 
 const JANIS_ORDER_REPORT_URL = "https://oms.janis.in/api/order-report";
-// Salvaguarda ante un posible loop de paginación: 60 páginas cubre con
-// margen la historia completa del reporte (hoy son ~1600 filas totales).
-const MAX_PAGES = 60;
 
 type JanisApiRow = {
   clientCode?: unknown;
@@ -39,23 +36,29 @@ function extractRows(body: any): JanisApiRow[] {
   return [];
 }
 
-function extractTotal(headers: Headers): number | null {
-  const raw =
-    headers.get("x-janis-total") ||
-    headers.get("x-total-count") ||
-    headers.get("x-total");
-  const n = raw ? Number(raw) : NaN;
-  return Number.isFinite(n) ? n : null;
-}
+// El endpoint pagina por HEADERS, no por query string: la query string se
+// valida estrictamente y rechaza con 400 cualquier parámetro no esperado
+// (confirmado con un 400 real al mandar "?page=1"). La app oficial
+// (app.janis.in) pagina mandando X-Janis-Page / X-Janis-Page-Size /
+// X-Janis-Totals como headers — replicamos ese mismo contrato acá.
+const PAGE_SIZE = 60;
+// Salvaguarda ante un loop inesperado: 200 páginas * 60 = 12.000 filas,
+// muy por encima del historial actual (~1600 filas).
+const MAX_PAGES = 200;
 
 async function fetchAllRows(authHeaders: Record<string, string>) {
+  const url = `${JANIS_ORDER_REPORT_URL}?sortBy=dateCreated&sortDirection=desc`;
   const rows: JanisApiRow[] = [];
-  let page = 1;
-  let expectedTotal: number | null = null;
 
-  while (page <= MAX_PAGES) {
-    const url = `${JANIS_ORDER_REPORT_URL}?sortBy=dateCreated&sortDirection=desc&page=${page}`;
-    const upstream = await fetch(url, { headers: authHeaders });
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const upstream = await fetch(url, {
+      headers: {
+        ...authHeaders,
+        "X-Janis-Page": String(page),
+        "X-Janis-Page-Size": String(PAGE_SIZE),
+        "X-Janis-Totals": page === 1 ? "true" : "false",
+      },
+    });
 
     if (!upstream.ok) {
       const detail = await upstream.text().catch(() => "");
@@ -66,23 +69,14 @@ async function fetchAllRows(authHeaders: Record<string, string>) {
       );
     }
 
-    if (expectedTotal === null) {
-      expectedTotal = extractTotal(upstream.headers);
-    }
-
     const body = await upstream.json();
     const pageRows = extractRows(body);
-    if (!pageRows.length) break;
-
     rows.push(...pageRows);
 
-    // Sin señal de paginación (endpoint devuelve todo en una sola
-    // respuesta, como sugiere el ejemplo provisto): no seguimos pidiendo
-    // páginas adicionales.
-    if (expectedTotal === null) break;
-    if (rows.length >= expectedTotal) break;
-
-    page += 1;
+    // Sin contador de total confiable del lado de la API: cortamos cuando
+    // una página vuelve incompleta (o vacía), que es la señal de "última
+    // página" independientemente de cómo la API exponga (o no) el total.
+    if (pageRows.length < PAGE_SIZE) break;
   }
 
   return rows;
