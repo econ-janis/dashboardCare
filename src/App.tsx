@@ -1029,6 +1029,7 @@ export default function JiraExecutiveDashboard() {
   const [showExecutiveReport, setShowExecutiveReport] = useState(false);
   const [janisLoading, setJanisLoading] = useState(false);
   const [janisLastFetched, setJanisLastFetched] = useState<Date | null>(null);
+  const [janisMeta, setJanisMeta] = useState<{ pagesFetched: number; rawRowCount: number } | null>(null);
 
   // Filters: rango por mes (YYYY-MM)
   const [fromMonth, setFromMonth] = useState<string>("all");
@@ -1263,6 +1264,7 @@ export default function JiraExecutiveDashboard() {
       }
       applyJanisRows(mapJanisRawRows((body && body.rows) || []));
       setJanisLastFetched(new Date());
+      setJanisMeta(body && body.meta ? body.meta : null);
     } catch (e: any) {
       setError((e && e.message) || "No pude cargar Janis Data desde la API.");
     } finally {
@@ -2015,7 +2017,11 @@ export default function JiraExecutiveDashboard() {
               {janisLoading
                 ? "Actualizando Janis Data desde la API…"
                 : janisLastFetched
-                ? `Janis Data actualizada: ${janisLastFetched.toLocaleString("es-AR")} · últimos 2 años`
+                ? `Janis Data actualizada: ${janisLastFetched.toLocaleString("es-AR")} · últimos 2 años${
+                    janisMeta
+                      ? ` · ${janisMeta.rawRowCount} filas / ${janisMeta.pagesFetched} páginas`
+                      : ""
+                  }`
                 : "Janis Data: sin datos de la API todavía."}
             </p>
           </div>

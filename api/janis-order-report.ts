@@ -46,40 +46,80 @@ const PAGE_SIZE = 60;
 // muy por encima del historial actual (~1600 filas).
 const MAX_PAGES = 200;
 
+async function fetchPage(url: string, headers: Record<string, string>) {
+  const upstream = await fetch(url, { headers });
+  if (!upstream.ok) {
+    const detail = await upstream.text().catch(() => "");
+    throw new Error(
+      `Janis API respondió ${upstream.status} ${upstream.statusText}${
+        detail ? ` — ${detail.slice(0, 300)}` : ""
+      }`
+    );
+  }
+  return upstream;
+}
+
 async function fetchAllRows(authHeaders: Record<string, string>) {
   const url = `${JANIS_ORDER_REPORT_URL}?sortBy=dateCreated&sortDirection=desc`;
   const rows: JanisApiRow[] = [];
+  let pagesFetched = 0;
 
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const upstream = await fetch(url, {
-      headers: {
+  // Pedido dedicado solo para conocer el total de registros: no usamos
+  // las filas que traiga esta respuesta particular, porque no hay
+  // garantía de que con X-Janis-Totals: true la página 1 devuelva el
+  // array completo de 60 filas (de hecho, esa fue la causa del bug
+  // anterior: el loop veía menos de 60 filas acá y cortaba pensando que
+  // ya era la última página). Leemos el total del header x-janis-total
+  // (expuesto explícitamente vía Access-Control-Expose-Headers) y, si no
+  // viene, de content-length dividido por PAGE_SIZE como aproximación.
+  const totalsProbe = await fetchPage(url, {
+    ...authHeaders,
+    "X-Janis-Page": "1",
+    "X-Janis-Page-Size": String(PAGE_SIZE),
+    "X-Janis-Totals": "true",
+  });
+  const totalHeader = Number(totalsProbe.headers.get("x-janis-total"));
+  const contentLength = Number(totalsProbe.headers.get("content-length"));
+  const totalRecords = Number.isFinite(totalHeader) && totalHeader > 0
+    ? totalHeader
+    : Number.isFinite(contentLength) && contentLength > 0
+      ? contentLength
+      : null;
+  await totalsProbe.json().catch(() => null); // drenar el body, no se usa
+
+  if (totalRecords) {
+    const totalPages = Math.min(Math.ceil(totalRecords / PAGE_SIZE), MAX_PAGES);
+    for (let page = 1; page <= totalPages; page++) {
+      const upstream = await fetchPage(url, {
         ...authHeaders,
         "X-Janis-Page": String(page),
         "X-Janis-Page-Size": String(PAGE_SIZE),
-        "X-Janis-Totals": page === 1 ? "true" : "false",
-      },
-    });
-
-    if (!upstream.ok) {
-      const detail = await upstream.text().catch(() => "");
-      throw new Error(
-        `Janis API respondió ${upstream.status} ${upstream.statusText}${
-          detail ? ` — ${detail.slice(0, 300)}` : ""
-        }`
-      );
+        "X-Janis-Totals": "false",
+      });
+      const body = await upstream.json();
+      rows.push(...extractRows(body));
+      pagesFetched += 1;
     }
-
-    const body = await upstream.json();
-    const pageRows = extractRows(body);
-    rows.push(...pageRows);
-
-    // Sin contador de total confiable del lado de la API: cortamos cuando
-    // una página vuelve incompleta (o vacía), que es la señal de "última
-    // página" independientemente de cómo la API exponga (o no) el total.
-    if (pageRows.length < PAGE_SIZE) break;
+  } else {
+    // Fallback si no hay ninguna señal de total: cortamos cuando una
+    // página vuelve incompleta (criterio anterior, menos preciso pero
+    // seguro).
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const upstream = await fetchPage(url, {
+        ...authHeaders,
+        "X-Janis-Page": String(page),
+        "X-Janis-Page-Size": String(PAGE_SIZE),
+        "X-Janis-Totals": "false",
+      });
+      const body = await upstream.json();
+      const pageRows = extractRows(body);
+      rows.push(...pageRows);
+      pagesFetched += 1;
+      if (pageRows.length < PAGE_SIZE) break;
+    }
   }
 
-  return rows;
+  return { rows, pagesFetched, totalRecords };
 }
 
 export default async function handler(req: any, res: any) {
@@ -101,7 +141,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const rawRows = await fetchAllRows({
+    const { rows: rawRows, pagesFetched, totalRecords } = await fetchAllRows({
       "janis-client": JANIS_CLIENT,
       "janis-api-key": JANIS_API_KEY,
       "janis-api-secret": JANIS_API_SECRET,
@@ -137,7 +177,14 @@ export default async function handler(req: any, res: any) {
       "Cache-Control",
       "private, s-maxage=120, stale-while-revalidate=300"
     );
-    res.status(200).json({ rows, fetchedAt: new Date().toISOString() });
+    res.status(200).json({
+      rows,
+      fetchedAt: new Date().toISOString(),
+      // Diagnóstico: cuántas páginas se recorrieron y cuántas filas crudas
+      // (antes del filtro de años) reportó la API — útil para detectar si
+      // en algún momento vuelve a cortarse antes de tiempo.
+      meta: { pagesFetched, totalRecordsReportedByApi: totalRecords, rawRowCount: rawRows.length },
+    });
   } catch (e: any) {
     res
       .status(502)
