@@ -15,9 +15,6 @@
 //   JANIS_API_SECRET
 
 const JANIS_ORDER_REPORT_URL = "https://oms.janis.in/api/order-report";
-// Salvaguarda ante un posible loop de paginación: 60 páginas cubre con
-// margen la historia completa del reporte (hoy son ~1600 filas totales).
-const MAX_PAGES = 60;
 
 type JanisApiRow = {
   clientCode?: unknown;
@@ -39,53 +36,25 @@ function extractRows(body: any): JanisApiRow[] {
   return [];
 }
 
-function extractTotal(headers: Headers): number | null {
-  const raw =
-    headers.get("x-janis-total") ||
-    headers.get("x-total-count") ||
-    headers.get("x-total");
-  const n = raw ? Number(raw) : NaN;
-  return Number.isFinite(n) ? n : null;
-}
-
+// El endpoint no soporta paginación: valida estrictamente el query string
+// y rechaza con 400 cualquier parámetro que no espere (ej. "page"), por
+// eso NO se agrega. Devuelve todo el historial en una sola respuesta
+// (confirmado por el CSV de referencia, que ya traía ~1600 filas).
 async function fetchAllRows(authHeaders: Record<string, string>) {
-  const rows: JanisApiRow[] = [];
-  let page = 1;
-  let expectedTotal: number | null = null;
+  const url = `${JANIS_ORDER_REPORT_URL}?sortBy=dateCreated&sortDirection=desc`;
+  const upstream = await fetch(url, { headers: authHeaders });
 
-  while (page <= MAX_PAGES) {
-    const url = `${JANIS_ORDER_REPORT_URL}?sortBy=dateCreated&sortDirection=desc&page=${page}`;
-    const upstream = await fetch(url, { headers: authHeaders });
-
-    if (!upstream.ok) {
-      const detail = await upstream.text().catch(() => "");
-      throw new Error(
-        `Janis API respondió ${upstream.status} ${upstream.statusText}${
-          detail ? ` — ${detail.slice(0, 300)}` : ""
-        }`
-      );
-    }
-
-    if (expectedTotal === null) {
-      expectedTotal = extractTotal(upstream.headers);
-    }
-
-    const body = await upstream.json();
-    const pageRows = extractRows(body);
-    if (!pageRows.length) break;
-
-    rows.push(...pageRows);
-
-    // Sin señal de paginación (endpoint devuelve todo en una sola
-    // respuesta, como sugiere el ejemplo provisto): no seguimos pidiendo
-    // páginas adicionales.
-    if (expectedTotal === null) break;
-    if (rows.length >= expectedTotal) break;
-
-    page += 1;
+  if (!upstream.ok) {
+    const detail = await upstream.text().catch(() => "");
+    throw new Error(
+      `Janis API respondió ${upstream.status} ${upstream.statusText}${
+        detail ? ` — ${detail.slice(0, 300)}` : ""
+      }`
+    );
   }
 
-  return rows;
+  const body = await upstream.json();
+  return extractRows(body);
 }
 
 export default async function handler(req: any, res: any) {
