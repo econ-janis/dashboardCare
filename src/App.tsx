@@ -1070,11 +1070,34 @@ export default function JiraExecutiveDashboard() {
 
   // Mapeo manual Organizacion (Jira) <-> Cliente (Janis Data), para cuando
   // el nombre no matchea automaticamente por texto normalizado. Ver
-  // Settings ("Organizacion <-> Cliente Janis") mas abajo.
-  const [orgMapping, setOrgMapping] = useState<OrgMapping>(() =>
-    loadOrgMappingFromStorage()
-  );
+  // Settings ("Organizacion <-> Cliente Janis") mas abajo. Fuente de verdad:
+  // Postgres (Neon) via /api/org-mapping, compartido entre todos los que
+  // usan el dashboard. Se cachea en localStorage solo para no arrancar en
+  // blanco mientras responde el fetch inicial (o si la API no responde).
+  const [orgMapping, setOrgMapping] = useState<OrgMapping>(() => loadOrgMappingFromStorage());
   const [showOrgSettings, setShowOrgSettings] = useState(false);
+  const [orgMappingLoading, setOrgMappingLoading] = useState(true);
+  const [orgMappingSavingKey, setOrgMappingSavingKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/org-mapping");
+        const body = await res.json().catch(() => null);
+        if (!res.ok) throw new Error((body && body.error) || `Error ${res.status} cargando el mapeo`);
+        if (!cancelled && body && body.mapping) setOrgMapping(body.mapping);
+      } catch (e: any) {
+        // Sin conexion a la API: seguimos con lo ultimo cacheado en localStorage.
+        console.error("No pude cargar el mapeo Organizacion <-> Janis desde la API:", e);
+      } finally {
+        if (!cancelled) setOrgMappingLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1084,6 +1107,44 @@ export default function JiraExecutiveDashboard() {
       // localStorage puede no estar disponible (modo privado, cuota llena, etc.); no es critico.
     }
   }, [orgMapping]);
+
+  // Guarda en Postgres (via /api/org-mapping) los Clientes Janis asociados
+  // a una Organizacion de Jira. Actualiza el estado local de forma
+  // optimista y lo revierte si el guardado falla.
+  const updateOrgMapping = async (jiraOrg: string, janisClients: string[]) => {
+    const orgKey = normalizeOrgKey(jiraOrg);
+    const previousClients = orgMapping[orgKey] || [];
+
+    setOrgMapping((prev) => {
+      const next = { ...prev };
+      if (janisClients.length === 0) delete next[orgKey];
+      else next[orgKey] = janisClients;
+      return next;
+    });
+    setOrgMappingSavingKey(orgKey);
+
+    try {
+      const res = await fetch("/api/org-mapping", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jiraOrg, janisClients }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error((body && body.error) || `Error ${res.status} guardando el mapeo`);
+      if (body && body.mapping) setOrgMapping(body.mapping);
+    } catch (e: any) {
+      setError((e && e.message) || "No pude guardar el mapeo en la base de datos.");
+      // La UI no debe mostrar un mapeo que no se llego a guardar.
+      setOrgMapping((prev) => {
+        const next = { ...prev };
+        if (previousClients.length === 0) delete next[orgKey];
+        else next[orgKey] = previousClients;
+        return next;
+      });
+    } finally {
+      setOrgMappingSavingKey((cur) => (cur === orgKey ? null : cur));
+    }
+  };
 
   // Filters: rango por mes (YYYY-MM)
   const [fromMonth, setFromMonth] = useState<string>("all");
@@ -2305,73 +2366,74 @@ export default function JiraExecutiveDashboard() {
                 asociadas). Una Organizacion puede tener varios Clientes, y un
                 mismo Cliente puede pertenecer a varias Organizaciones. Sin
                 mapeo manual, se intenta un match automatico por nombre
-                normalizado (como antes).
+                normalizado (como antes). Se guarda en la base de datos, compartido
+                para todos los que usan el dashboard.
               </div>
 
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-slate-500">
-                      <th className="py-2 pr-4 font-medium">Organizacion (Jira)</th>
-                      <th className="py-2 pr-4 font-medium">Cliente(s) (Janis Data)</th>
-                      <th className="py-2 font-medium">Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {jiraOrgOptions.length === 0 ? (
-                      <tr>
-                        <td colSpan={3} className="py-3 text-slate-400">
-                          Subi el CSV de Jira para ver sus Organizaciones aca.
-                        </td>
+              {orgMappingLoading ? (
+                <div className={`${UI.subtle} mt-4`}>Cargando mapeo guardado…</div>
+              ) : (
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-slate-500">
+                        <th className="py-2 pr-4 font-medium">Organizacion (Jira)</th>
+                        <th className="py-2 pr-4 font-medium">Cliente(s) (Janis Data)</th>
+                        <th className="py-2 font-medium">Estado</th>
                       </tr>
-                    ) : (
-                      jiraOrgOptions.map((org) => {
-                        const orgKey = normalizeOrgKey(org);
-                        const manualClients = orgMapping[orgKey] || [];
-                        const autoMatch = janisClientOptions.filter(
-                          (c) => normalizeOrgKey(c) === orgKey
-                        );
-                        const hasMatch = manualClients.length > 0 || autoMatch.length > 0;
-                        return (
-                          <tr key={org} className="border-t border-slate-100 align-top">
-                            <td className="py-2 pr-4 font-medium text-slate-700">{org}</td>
-                            <td className="py-2 pr-4 min-w-[240px]">
-                              <MultiSelect
-                                options={janisClientOptions}
-                                selected={manualClients}
-                                onChange={(values) =>
-                                  setOrgMapping((prev) => {
-                                    const next = { ...prev };
-                                    if (values.length === 0) delete next[orgKey];
-                                    else next[orgKey] = values;
-                                    return next;
-                                  })
-                                }
-                                placeholder={
-                                  autoMatch.length
-                                    ? `Automatico: ${autoMatch.join(", ")}`
-                                    : "Elegir cliente(s)"
-                                }
-                              />
-                            </td>
-                            <td className="py-2 text-xs">
-                              {hasMatch ? (
-                                <span className="text-emerald-600">
-                                  ✓ {manualClients.length > 0 ? "Mapeo manual" : "Match automatico"}
-                                </span>
-                              ) : (
-                                <span className="text-amber-600">
-                                  Sin match — Janis Data no se filtrara para esta organizacion
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {jiraOrgOptions.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="py-3 text-slate-400">
+                            Subi el CSV de Jira para ver sus Organizaciones aca.
+                          </td>
+                        </tr>
+                      ) : (
+                        jiraOrgOptions.map((org) => {
+                          const orgKey = normalizeOrgKey(org);
+                          const manualClients = orgMapping[orgKey] || [];
+                          const autoMatch = janisClientOptions.filter(
+                            (c) => normalizeOrgKey(c) === orgKey
+                          );
+                          const hasMatch = manualClients.length > 0 || autoMatch.length > 0;
+                          const isSaving = orgMappingSavingKey === orgKey;
+                          return (
+                            <tr key={org} className="border-t border-slate-100 align-top">
+                              <td className="py-2 pr-4 font-medium text-slate-700">{org}</td>
+                              <td className="py-2 pr-4 min-w-[240px]">
+                                <MultiSelect
+                                  options={janisClientOptions}
+                                  selected={manualClients}
+                                  onChange={(values) => updateOrgMapping(org, values)}
+                                  placeholder={
+                                    autoMatch.length
+                                      ? `Automatico: ${autoMatch.join(", ")}`
+                                      : "Elegir cliente(s)"
+                                  }
+                                />
+                              </td>
+                              <td className="py-2 text-xs">
+                                {isSaving ? (
+                                  <span className="text-slate-400">Guardando…</span>
+                                ) : hasMatch ? (
+                                  <span className="text-emerald-600">
+                                    ✓ {manualClients.length > 0 ? "Mapeo manual" : "Match automatico"}
+                                  </span>
+                                ) : (
+                                  <span className="text-amber-600">
+                                    Sin match — Janis Data no se filtrara para esta organizacion
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </CardContent>
           </Card>
         ) : null}
