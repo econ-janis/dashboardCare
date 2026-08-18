@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import {
   LineChart,
@@ -583,16 +583,14 @@ function filterRowsForPeriod(
   endMonth: string | null,
   orgFilterValue: string[],
   assigneeFilterValue: string,
-  statusFilterValue: string
+  statusFilterValue: string,
+  orgMapping: OrgMapping = {}
 ) {
   if (!startMonth || !endMonth) return [] as Row[];
+  const { jiraKeys } = resolveOrgFilterKeys(orgFilterValue, orgMapping);
   return sourceRows.filter((r) => {
     if (r.month < startMonth || r.month > endMonth) return false;
-    if (
-      orgFilterValue.length > 0 &&
-      !orgFilterValue.some((o) => normalizeOrgKey(r.organization) === normalizeOrgKey(o))
-    )
-      return false;
+    if (orgFilterValue.length > 0 && !jiraKeys.has(normalizeOrgKey(r.organization))) return false;
     if (assigneeFilterValue !== "all" && r.asignado !== assigneeFilterValue) return false;
     if (statusFilterValue !== "all" && r.estado !== statusFilterValue) return false;
     return true;
@@ -603,16 +601,14 @@ function filterJanisRowsForPeriod(
   sourceRows: JanisRow[],
   startMonth: string | null,
   endMonth: string | null,
-  orgFilterValue: string[]
+  orgFilterValue: string[],
+  orgMapping: OrgMapping = {}
 ) {
   if (!startMonth || !endMonth) return [] as JanisRow[];
+  const { janisKeys } = resolveOrgFilterKeys(orgFilterValue, orgMapping);
   return sourceRows.filter((r) => {
     if (r.month < startMonth || r.month > endMonth) return false;
-    if (
-      orgFilterValue.length > 0 &&
-      !orgFilterValue.some((o) => normalizeOrgKey(r.clientCode) === normalizeOrgKey(o))
-    )
-      return false;
+    if (orgFilterValue.length > 0 && !janisKeys.has(normalizeOrgKey(r.clientCode))) return false;
     return true;
   });
 }
@@ -853,6 +849,75 @@ function normalizeOrgKey(value: string) {
     .replace(/[^a-z0-9]/g, "");
 }
 
+// Mapeo manual, configurable en Settings: Organizacion de Jira (clave
+// normalizada) -> lista de Clientes de Janis Data (nombres tal cual
+// aparecen en el order-report) asociados a esa organizacion. Es
+// muchos-a-muchos: una Organizacion puede listar varios Clientes, y un
+// mismo Cliente puede aparecer en la lista de varias Organizaciones. Se
+// persiste en localStorage para no perderlo entre sesiones (no hay
+// backend propio para guardarlo).
+type OrgMapping = Record<string, string[]>;
+
+const ORG_MAPPING_STORAGE_KEY = "janis-care-dashboard:org-mapping";
+
+function loadOrgMappingFromStorage(): OrgMapping {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(ORG_MAPPING_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const result: OrgMapping = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (Array.isArray(value)) {
+        result[key] = value.filter((v) => typeof v === "string" && v);
+      } else if (typeof value === "string" && value) {
+        // Compat con un formato anterior (uno-a-uno) por si quedo algo guardado.
+        result[key] = [value];
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+// Dado el conjunto de valores seleccionados en el filtro de Organizacion
+// (que mezcla nombres de Organizacion de Jira y Clientes de Janis, porque
+// el dropdown une ambas fuentes) y el mapeo manual muchos-a-muchos de
+// Settings, arma las claves normalizadas contra las que hay que comparar
+// cada lado. Sin mapeo explicito para un valor, se cae al comportamiento
+// historico: comparar el nombre normalizado tal cual contra ambos lados.
+function resolveOrgFilterKeys(
+  orgFilterValue: string[],
+  orgMapping: OrgMapping
+): { jiraKeys: Set<string>; janisKeys: Set<string> } {
+  const reverseMapping: Record<string, string[]> = {};
+  for (const [jiraKey, janisClients] of Object.entries(orgMapping)) {
+    for (const janisClient of janisClients) {
+      const janisKey = normalizeOrgKey(janisClient);
+      if (!janisKey) continue;
+      if (!reverseMapping[janisKey]) reverseMapping[janisKey] = [];
+      reverseMapping[janisKey].push(jiraKey);
+    }
+  }
+
+  const jiraKeys = new Set<string>();
+  const janisKeys = new Set<string>();
+
+  for (const o of orgFilterValue) {
+    const key = normalizeOrgKey(o);
+    jiraKeys.add(key);
+    janisKeys.add(key);
+    // `o` es una Organizacion de Jira con mapeo explicito -> tambien matchear todos sus Clientes Janis.
+    (orgMapping[key] || []).forEach((janisClient) => janisKeys.add(normalizeOrgKey(janisClient)));
+    // `o` es (o coincide con) un Cliente Janis que una o varias Organizaciones de Jira mapean explicitamente.
+    (reverseMapping[key] || []).forEach((jiraOrgKey) => jiraKeys.add(jiraOrgKey));
+  }
+
+  return { jiraKeys, janisKeys };
+}
+
 function shiftYm(ymValue: string, monthDelta: number) {
   const [yRaw, mRaw] = String(ymValue || "").split("-");
   const y = Number(yRaw);
@@ -1002,6 +1067,23 @@ export default function JiraExecutiveDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [showExecutiveReport, setShowExecutiveReport] = useState(false);
+
+  // Mapeo manual Organizacion (Jira) <-> Cliente (Janis Data), para cuando
+  // el nombre no matchea automaticamente por texto normalizado. Ver
+  // Settings ("Organizacion <-> Cliente Janis") mas abajo.
+  const [orgMapping, setOrgMapping] = useState<OrgMapping>(() =>
+    loadOrgMappingFromStorage()
+  );
+  const [showOrgSettings, setShowOrgSettings] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(ORG_MAPPING_STORAGE_KEY, JSON.stringify(orgMapping));
+    } catch {
+      // localStorage puede no estar disponible (modo privado, cuota llena, etc.); no es critico.
+    }
+  }, [orgMapping]);
 
   // Filters: rango por mes (YYYY-MM)
   const [fromMonth, setFromMonth] = useState<string>("all");
@@ -1266,30 +1348,47 @@ export default function JiraExecutiveDashboard() {
     return { start, end };
   }, [rows, janisRows]);
 
-  const orgMatches = (candidate: string) =>
-    orgFilter.length === 0 || orgFilter.some((o) => normalizeOrgKey(candidate) === normalizeOrgKey(o));
+  // Listas para el panel de Settings: Organizaciones de Jira y Clientes de
+  // Janis vistos en los datos cargados (independientes del filtro activo).
+  const jiraOrgOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.organization).filter(Boolean))).sort(),
+    [rows]
+  );
+  const janisClientOptions = useMemo(
+    () => Array.from(new Set(janisRows.map((r) => r.clientCode).filter(Boolean))).sort(),
+    [janisRows]
+  );
+
+  // Claves normalizadas contra las que matchear cada lado (Jira / Janis)
+  // para el filtro de Organizacion actualmente seleccionado, ya resueltas
+  // con el mapeo manual de Settings (con fallback al match automatico por
+  // nombre normalizado, como antes).
+  const orgFilterKeys = useMemo(
+    () => resolveOrgFilterKeys(orgFilter, orgMapping),
+    [orgFilter, orgMapping]
+  );
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
       if (fromMonth !== "all" && r.month < fromMonth) return false;
       if (toMonth !== "all" && r.month > toMonth) return false;
       if (overlapRange && (r.month < overlapRange.start || r.month > overlapRange.end)) return false;
-      if (!orgMatches(r.organization)) return false;
+      if (orgFilter.length > 0 && !orgFilterKeys.jiraKeys.has(normalizeOrgKey(r.organization))) return false;
       if (assigneeFilter !== "all" && r.asignado !== assigneeFilter) return false;
       if (statusFilter !== "all" && r.estado !== statusFilter) return false;
       return true;
     });
-  }, [rows, fromMonth, toMonth, overlapRange, assigneeFilter, statusFilter, orgFilter]);
+  }, [rows, fromMonth, toMonth, overlapRange, assigneeFilter, statusFilter, orgFilter, orgFilterKeys]);
 
   const janisFiltered = useMemo(() => {
     return janisRows.filter((r) => {
       if (fromMonth !== "all" && r.month < fromMonth) return false;
       if (toMonth !== "all" && r.month > toMonth) return false;
       if (overlapRange && (r.month < overlapRange.start || r.month > overlapRange.end)) return false;
-      if (!orgMatches(r.clientCode)) return false;
+      if (orgFilter.length > 0 && !orgFilterKeys.janisKeys.has(normalizeOrgKey(r.clientCode))) return false;
       return true;
     });
-  }, [janisRows, fromMonth, toMonth, overlapRange, orgFilter]);
+  }, [janisRows, fromMonth, toMonth, overlapRange, orgFilter, orgFilterKeys]);
 
   const comparisonPeriods = useMemo(() => {
     const filterStart = fromMonth === "all" ? autoRange.minMonth || null : fromMonth;
@@ -1318,13 +1417,17 @@ export default function JiraExecutiveDashboard() {
         previousEnd,
         orgFilter,
         assigneeFilter,
-        statusFilter
+        statusFilter,
+        orgMapping
       ).length;
 
-      const prevOrders = filterJanisRowsForPeriod(janisRows, previousStart, previousEnd, orgFilter).reduce(
-        (acc, row) => acc + row.totalOrders,
-        0
-      );
+      const prevOrders = filterJanisRowsForPeriod(
+        janisRows,
+        previousStart,
+        previousEnd,
+        orgFilter,
+        orgMapping
+      ).reduce((acc, row) => acc + row.totalOrders, 0);
 
       const previousTicketsPer1k = prevOrders > 0 ? (prevTickets / prevOrders) * 1000 : null;
       if (ticketsPer1kOrders != null && previousTicketsPer1k != null && previousTicketsPer1k > 0) {
@@ -1338,7 +1441,17 @@ export default function JiraExecutiveDashboard() {
       ordersPerTicketRounded: filtered.length > 0 ? Math.round(totalOrders / filtered.length) : null,
       yoyPct,
     };
-  }, [janisFiltered, filtered, rows, janisRows, comparisonPeriods, assigneeFilter, statusFilter, orgFilter]);
+  }, [
+    janisFiltered,
+    filtered,
+    rows,
+    janisRows,
+    comparisonPeriods,
+    assigneeFilter,
+    statusFilter,
+    orgFilter,
+    orgMapping,
+  ]);
 
   const kpis = useMemo(() => {
     const total = filtered.length;
@@ -1436,13 +1549,15 @@ export default function JiraExecutiveDashboard() {
       comparisonPeriods.comparisonCurrentPeriod.end,
       orgFilter,
       assigneeFilter,
-      statusFilter
+      statusFilter,
+      orgMapping
     );
     const currentJanisRows = filterJanisRowsForPeriod(
       janisRows,
       comparisonPeriods.comparisonCurrentPeriod.start,
       comparisonPeriods.comparisonCurrentPeriod.end,
-      orgFilter
+      orgFilter,
+      orgMapping
     );
     const previousRows = filterRowsForPeriod(
       rows,
@@ -1450,13 +1565,15 @@ export default function JiraExecutiveDashboard() {
       comparisonPeriods.comparisonPreviousPeriod.end,
       orgFilter,
       assigneeFilter,
-      statusFilter
+      statusFilter,
+      orgMapping
     );
     const previousJanisRows = filterJanisRowsForPeriod(
       janisRows,
       comparisonPeriods.comparisonPreviousPeriod.start,
       comparisonPeriods.comparisonPreviousPeriod.end,
-      orgFilter
+      orgFilter,
+      orgMapping
     );
 
     return {
@@ -1470,6 +1587,7 @@ export default function JiraExecutiveDashboard() {
     orgFilter,
     assigneeFilter,
     statusFilter,
+    orgMapping,
   ]);
 
   const noPreviousPeriodData = "Sin datos del periodo anterior";
@@ -2079,6 +2197,14 @@ export default function JiraExecutiveDashboard() {
             <Button variant="outline" onClick={clearAll}>
               Clean
             </Button>
+
+            <Button
+              variant="outline"
+              onClick={() => setShowOrgSettings((v) => !v)}
+              title="Configurar que Organizacion de Jira corresponde a que Cliente de Janis Data"
+            >
+              {showOrgSettings ? "Cerrar Settings" : "⚙ Settings"}
+            </Button>
           </div>
         </div>
 
@@ -2165,6 +2291,90 @@ export default function JiraExecutiveDashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {showOrgSettings ? (
+          <Card className={`${UI.card} mt-3`}>
+            <CardContent className="p-4">
+              <div className="text-sm font-semibold text-slate-700">
+                Settings: Organizacion (Jira) ↔ Cliente (Janis Data)
+              </div>
+              <div className={`${UI.subtle} mt-1 max-w-2xl`}>
+                Al elegir una Organizacion en el filtro de arriba, esto define que
+                Cliente(s) de Janis Data se incluyen en los KPIs de pedidos (y
+                viceversa: elegir un Cliente tambien trae sus Organizaciones
+                asociadas). Una Organizacion puede tener varios Clientes, y un
+                mismo Cliente puede pertenecer a varias Organizaciones. Sin
+                mapeo manual, se intenta un match automatico por nombre
+                normalizado (como antes).
+              </div>
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-slate-500">
+                      <th className="py-2 pr-4 font-medium">Organizacion (Jira)</th>
+                      <th className="py-2 pr-4 font-medium">Cliente(s) (Janis Data)</th>
+                      <th className="py-2 font-medium">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {jiraOrgOptions.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="py-3 text-slate-400">
+                          Subi el CSV de Jira para ver sus Organizaciones aca.
+                        </td>
+                      </tr>
+                    ) : (
+                      jiraOrgOptions.map((org) => {
+                        const orgKey = normalizeOrgKey(org);
+                        const manualClients = orgMapping[orgKey] || [];
+                        const autoMatch = janisClientOptions.filter(
+                          (c) => normalizeOrgKey(c) === orgKey
+                        );
+                        const hasMatch = manualClients.length > 0 || autoMatch.length > 0;
+                        return (
+                          <tr key={org} className="border-t border-slate-100 align-top">
+                            <td className="py-2 pr-4 font-medium text-slate-700">{org}</td>
+                            <td className="py-2 pr-4 min-w-[240px]">
+                              <MultiSelect
+                                options={janisClientOptions}
+                                selected={manualClients}
+                                onChange={(values) =>
+                                  setOrgMapping((prev) => {
+                                    const next = { ...prev };
+                                    if (values.length === 0) delete next[orgKey];
+                                    else next[orgKey] = values;
+                                    return next;
+                                  })
+                                }
+                                placeholder={
+                                  autoMatch.length
+                                    ? `Automatico: ${autoMatch.join(", ")}`
+                                    : "Elegir cliente(s)"
+                                }
+                              />
+                            </td>
+                            <td className="py-2 text-xs">
+                              {hasMatch ? (
+                                <span className="text-emerald-600">
+                                  ✓ {manualClients.length > 0 ? "Mapeo manual" : "Match automatico"}
+                                </span>
+                              ) : (
+                                <span className="text-amber-600">
+                                  Sin match — Janis Data no se filtrara para esta organizacion
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {/* KPIs */}
         <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-5">
