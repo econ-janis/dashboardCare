@@ -670,6 +670,26 @@ function buildPeriodKpis(periodRows: Row[], periodJanisRows: JanisRow[]) {
   };
 }
 
+type PeriodKpis = ReturnType<typeof buildPeriodKpis>;
+
+// Computa los KPIs de un mismo rango de meses (Ene-Ago, etc.) para cada
+// año presente en `years`, para armar la comparacion interanual con N
+// años en vez de solo actual/anterior.
+function buildComparisonKpisForYears(
+  years: YearlyPeriod[],
+  rows: Row[],
+  janisRows: JanisRow[],
+  orgFilter: string[],
+  assigneeFilter: string,
+  statusFilter: string,
+  orgMapping: OrgMapping
+): { year: string; kpis: PeriodKpis }[] {
+  return years.map((y) => {
+    const periodRows = filterRowsForPeriod(rows, y.start, y.end, orgFilter, assigneeFilter, statusFilter, orgMapping);
+    const periodJanisRows = filterJanisRowsForPeriod(janisRows, y.start, y.end, orgFilter, orgMapping);
+    return { year: y.year, kpis: buildPeriodKpis(periodRows, periodJanisRows) };
+  });
+}
 
 function KpiPreviousPeriod({ children }: { children: React.ReactNode }) {
   return <div className="mt-3 border-t border-slate-100 pt-2 text-xs text-slate-500">{children}</div>;
@@ -830,7 +850,15 @@ type Row = {
   slaResponseHours: number | null;
   slaResponseStatus: "Cumplido" | "Incumplido";
   satisfaction: number | null;
+  // Columna "Cuenta Janis" del CSV de Jira. "1 - PMC" identifica clientes
+  // con Plan de Soporte Contratado (ver isPmcAccount).
+  cuentaJanis: string;
 };
+
+// "1 - PMC" tolerando variaciones de espacios/mayusculas (ej. "1-PMC", "1 -PMC").
+function isPmcAccount(value: string) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, "") === "1-pmc";
+}
 
 type JanisRow = {
   clientCode: string;
@@ -931,47 +959,45 @@ type MonthPeriod = {
   end: string | null;
 };
 
-type ComparisonPeriods = {
+type YearlyPeriod = MonthPeriod & { year: string };
+
+type InterannualPeriods = {
   selectedPeriod: MonthPeriod;
-  comparisonCurrentPeriod: MonthPeriod;
-  comparisonPreviousPeriod: MonthPeriod;
+  // Un periodo por cada año presente en el rango seleccionado, mismo mes
+  // de inicio/fin que el año mas reciente (ej. Ene-Ago) pero replicado
+  // año a año. Orden: mas reciente primero.
+  years: YearlyPeriod[];
 };
 
 function isValidMonthPeriod(period: MonthPeriod) {
   return Boolean(period.start && period.end && period.start <= period.end);
 }
 
-function buildComparisonPeriods(selectedPeriod: MonthPeriod): ComparisonPeriods {
-  const emptyComparable = { start: null, end: null };
+function buildInterannualPeriods(selectedPeriod: MonthPeriod): InterannualPeriods {
   if (!isValidMonthPeriod(selectedPeriod) || !selectedPeriod.start || !selectedPeriod.end) {
-    return {
-      selectedPeriod,
-      comparisonCurrentPeriod: emptyComparable,
-      comparisonPreviousPeriod: emptyComparable,
-    };
+    return { selectedPeriod, years: [] };
   }
 
-  const latestYear = selectedPeriod.end.slice(0, 4);
+  const latestYear = Number(selectedPeriod.end.slice(0, 4));
+  const earliestYear = Number(selectedPeriod.start.slice(0, 4));
   const latestYearStart = `${latestYear}-01`;
-  const comparisonCurrentStart =
-    selectedPeriod.start > latestYearStart ? selectedPeriod.start : latestYearStart;
-  const comparisonCurrentPeriod = {
-    start: comparisonCurrentStart,
-    end: selectedPeriod.end,
-  };
+  // Mismo criterio que antes para el año mas reciente: si el filtro
+  // arranca dentro de ese año (ej. filtro desde marzo), respeta ese mes;
+  // si arranca en un año anterior, usa enero del año mas reciente.
+  const currentStart = selectedPeriod.start > latestYearStart ? selectedPeriod.start : latestYearStart;
+  const currentEnd = selectedPeriod.end;
 
-  return {
-    selectedPeriod,
-    comparisonCurrentPeriod,
-    comparisonPreviousPeriod: {
-      start: shiftYm(comparisonCurrentPeriod.start, -12),
-      end: shiftYm(comparisonCurrentPeriod.end, -12),
-    },
-  };
-}
+  const years: YearlyPeriod[] = [];
+  for (let year = latestYear; year >= earliestYear; year--) {
+    const shiftMonths = (year - latestYear) * 12;
+    years.push({
+      year: String(year),
+      start: shiftYm(currentStart, shiftMonths),
+      end: shiftYm(currentEnd, shiftMonths),
+    });
+  }
 
-function periodYear(period: MonthPeriod) {
-  return period.start ? period.start.slice(0, 4) : null;
+  return { selectedPeriod, years };
 }
 
 function interannualMonthRangeLabel(period: MonthPeriod) {
@@ -1263,6 +1289,16 @@ export default function JiraExecutiveDashboard() {
               )
             ).trim();
 
+            const cuentaJanis = String(
+              coalesce(
+                getField(r, [
+                  "campo personalizado (cuenta janis)",
+                  "cuenta janis",
+                ]),
+                ""
+              )
+            ).trim();
+
             const estado = String(coalesce(r["estado"], "")).trim();
             // Excluir Block/Hold
             if (/\b(block|hold)\b/i.test(estado)) continue;
@@ -1301,6 +1337,7 @@ export default function JiraExecutiveDashboard() {
               slaResponseHours: slaResp,
               slaResponseStatus: respStatus,
               satisfaction: sat,
+              cuentaJanis,
             });
           }
 
@@ -1457,14 +1494,14 @@ export default function JiraExecutiveDashboard() {
     });
   }, [janisRows, fromMonth, toMonth, overlapRange, orgFilter, orgFilterKeys]);
 
-  const comparisonPeriods = useMemo(() => {
+  const interannualPeriods = useMemo(() => {
     const filterStart = fromMonth === "all" ? autoRange.minMonth || null : fromMonth;
     const filterEnd = toMonth === "all" ? autoRange.maxMonth || null : toMonth;
     const selectedStart =
       filterStart && overlapRange && overlapRange.start > filterStart ? overlapRange.start : filterStart;
     const selectedEnd = filterEnd && overlapRange && overlapRange.end < filterEnd ? overlapRange.end : filterEnd;
 
-    return buildComparisonPeriods({
+    return buildInterannualPeriods({
       start: selectedStart,
       end: selectedEnd,
     });
@@ -1474,9 +1511,12 @@ export default function JiraExecutiveDashboard() {
     const totalOrders = janisFiltered.reduce((acc, row) => acc + row.totalOrders, 0);
     const ticketsPer1kOrders = totalOrders > 0 ? (filtered.length / totalOrders) * 1000 : null;
 
+    // YoY: siempre contra el año inmediatamente anterior (years[0] es el
+    // mas reciente, years[1] el que le sigue hacia atras).
     let yoyPct: number | null = null;
-    const previousStart = comparisonPeriods.comparisonPreviousPeriod.start;
-    const previousEnd = comparisonPeriods.comparisonPreviousPeriod.end;
+    const previousPeriod = interannualPeriods.years[1];
+    const previousStart = previousPeriod?.start ?? null;
+    const previousEnd = previousPeriod?.end ?? null;
     if (previousStart && previousEnd) {
       const prevTickets = filterRowsForPeriod(
         rows,
@@ -1513,7 +1553,7 @@ export default function JiraExecutiveDashboard() {
     filtered,
     rows,
     janisRows,
-    comparisonPeriods,
+    interannualPeriods,
     assigneeFilter,
     statusFilter,
     orgFilter,
@@ -1609,89 +1649,82 @@ export default function JiraExecutiveDashboard() {
     };
   }, [filtered]);
 
-  const comparisonKpis = useMemo(() => {
-    const currentRows = filterRowsForPeriod(
-      rows,
-      comparisonPeriods.comparisonCurrentPeriod.start,
-      comparisonPeriods.comparisonCurrentPeriod.end,
-      orgFilter,
-      assigneeFilter,
-      statusFilter,
-      orgMapping
-    );
-    const currentJanisRows = filterJanisRowsForPeriod(
-      janisRows,
-      comparisonPeriods.comparisonCurrentPeriod.start,
-      comparisonPeriods.comparisonCurrentPeriod.end,
-      orgFilter,
-      orgMapping
-    );
-    const previousRows = filterRowsForPeriod(
-      rows,
-      comparisonPeriods.comparisonPreviousPeriod.start,
-      comparisonPeriods.comparisonPreviousPeriod.end,
-      orgFilter,
-      assigneeFilter,
-      statusFilter,
-      orgMapping
-    );
-    const previousJanisRows = filterJanisRowsForPeriod(
-      janisRows,
-      comparisonPeriods.comparisonPreviousPeriod.start,
-      comparisonPeriods.comparisonPreviousPeriod.end,
-      orgFilter,
-      orgMapping
-    );
+  const comparisonKpis = useMemo(
+    () => ({
+      years: buildComparisonKpisForYears(
+        interannualPeriods.years,
+        rows,
+        janisRows,
+        orgFilter,
+        assigneeFilter,
+        statusFilter,
+        orgMapping
+      ),
+    }),
+    [interannualPeriods, rows, janisRows, orgFilter, assigneeFilter, statusFilter, orgMapping]
+  );
 
-    return {
-      current: buildPeriodKpis(currentRows, currentJanisRows),
-      previous: buildPeriodKpis(previousRows, previousJanisRows),
-    };
-  }, [
-    rows,
-    janisRows,
-    comparisonPeriods,
-    orgFilter,
-    assigneeFilter,
-    statusFilter,
-    orgMapping,
-  ]);
+  // SLA Response, pero solo para clientes con Plan de Soporte Contratado
+  // (columna "Cuenta Janis" == "1 - PMC" en el CSV de Jira).
+  const pmcRows = useMemo(() => rows.filter((r) => isPmcAccount(r.cuentaJanis)), [rows]);
+  const kpisPmc = useMemo(() => {
+    const periodRows = pmcRows.filter((r) => {
+      if (fromMonth !== "all" && r.month < fromMonth) return false;
+      if (toMonth !== "all" && r.month > toMonth) return false;
+      if (overlapRange && (r.month < overlapRange.start || r.month > overlapRange.end)) return false;
+      if (orgFilter.length > 0 && !orgFilterKeys.jiraKeys.has(normalizeOrgKey(r.organization))) return false;
+      if (assigneeFilter !== "all" && r.asignado !== assigneeFilter) return false;
+      if (statusFilter !== "all" && r.estado !== statusFilter) return false;
+      return true;
+    });
+    const total = periodRows.length;
+    const respInc = periodRows.filter((r) => r.slaResponseStatus === "Incumplido").length;
+    return { total, respInc, respOkPct: 100 - pct(respInc, total) };
+  }, [pmcRows, fromMonth, toMonth, overlapRange, orgFilter, orgFilterKeys, assigneeFilter, statusFilter]);
+  const comparisonKpisPmc = useMemo(
+    () => ({
+      years: buildComparisonKpisForYears(
+        interannualPeriods.years,
+        pmcRows,
+        janisRows,
+        orgFilter,
+        assigneeFilter,
+        statusFilter,
+        orgMapping
+      ),
+    }),
+    [interannualPeriods, pmcRows, janisRows, orgFilter, assigneeFilter, statusFilter, orgMapping]
+  );
 
   const noPreviousPeriodData = "Sin datos del periodo anterior";
-  const interannualRangeLabel = interannualMonthRangeLabel(comparisonPeriods.comparisonCurrentPeriod);
-  const comparisonCurrentYear = periodYear(comparisonPeriods.comparisonCurrentPeriod);
-  const comparisonPreviousYear = periodYear(comparisonPeriods.comparisonPreviousPeriod);
+  const interannualRangeLabel = interannualPeriods.years.length
+    ? interannualMonthRangeLabel(interannualPeriods.years[0])
+    : null;
 
-  const renderInterannualComparison = (args: {
-    hasCurrentValue: boolean;
-    currentValue: React.ReactNode;
-    currentMetricValue: number | null;
-    hasPreviousValue: boolean;
-    previousValue: React.ReactNode;
-    previousMetricValue: number | null;
-    direction: MetricPerformanceDirection;
-  }) => {
-    const currentClass = metricPerformanceClass(
-      args.currentMetricValue,
-      args.hasPreviousValue ? args.previousMetricValue : null,
-      args.direction
-    );
+  const renderInterannualComparison = (
+    years: { year: string; kpis: PeriodKpis }[],
+    args: {
+      direction: MetricPerformanceDirection;
+      getValue: (kpis: PeriodKpis) => { hasValue: boolean; value: React.ReactNode; metricValue: number | null };
+    }
+  ) => {
+    const yearRows = years
+      .map((y) => ({ year: y.year, ...args.getValue(y.kpis) }))
+      .filter((r) => r.hasValue);
 
     return (
       <div className="interannual-comparison">
         {interannualRangeLabel ? <div className="interannual-title">Interanual {interannualRangeLabel}:</div> : null}
-        {comparisonCurrentYear && args.hasCurrentValue ? (
-          <div className={currentClass}>
-            - {comparisonCurrentYear}: {args.currentValue}
-          </div>
-        ) : null}
-        {comparisonPreviousYear && args.hasPreviousValue ? (
-          <div className="metric-neutral">
-            - {comparisonPreviousYear}: {args.previousValue}
-          </div>
-        ) : (
-          <div className="metric-neutral">{noPreviousPeriodData}</div>
-        )}
+        {yearRows.map((r, idx) => {
+          const olderMetricValue = yearRows[idx + 1] ? yearRows[idx + 1].metricValue : null;
+          const cls = idx === 0 ? metricPerformanceClass(r.metricValue, olderMetricValue, args.direction) : "metric-neutral";
+          return (
+            <div key={r.year} className={cls}>
+              - {r.year}: {r.value}
+            </div>
+          );
+        })}
+        {yearRows.length < 2 ? <div className="metric-neutral">{noPreviousPeriodData}</div> : null}
       </div>
     );
   };
@@ -2455,14 +2488,13 @@ export default function JiraExecutiveDashboard() {
             </>,
             undefined,
             undefined,
-            renderInterannualComparison({
-              hasCurrentValue: comparisonKpis.current.hasJiraPeriodData,
-              currentValue: `${formatInt(comparisonKpis.current.total)} tickets`,
-              currentMetricValue: comparisonKpis.current.total,
-              hasPreviousValue: comparisonKpis.previous.hasJiraPeriodData,
-              previousValue: `${formatInt(comparisonKpis.previous.total)} tickets`,
-              previousMetricValue: comparisonKpis.previous.total,
+            renderInterannualComparison(comparisonKpis.years, {
               direction: "lower-is-better",
+              getValue: (k) => ({
+                hasValue: k.hasJiraPeriodData,
+                value: `${formatInt(k.total)} tickets`,
+                metricValue: k.total,
+              }),
             })
           )}
           {kpiCard(
@@ -2474,14 +2506,13 @@ export default function JiraExecutiveDashboard() {
             </>,
             undefined,
             undefined,
-            renderInterannualComparison({
-              hasCurrentValue: comparisonKpis.current.hasJiraPeriodData,
-              currentValue: `${formatInt(comparisonKpis.current.linkedTickets)} HDI`,
-              currentMetricValue: comparisonKpis.current.linkedTickets,
-              hasPreviousValue: comparisonKpis.previous.hasJiraPeriodData,
-              previousValue: `${formatInt(comparisonKpis.previous.linkedTickets)} HDI`,
-              previousMetricValue: comparisonKpis.previous.linkedTickets,
+            renderInterannualComparison(comparisonKpis.years, {
               direction: "lower-is-better",
+              getValue: (k) => ({
+                hasValue: k.hasJiraPeriodData,
+                value: `${formatInt(k.linkedTickets)} HDI`,
+                metricValue: k.linkedTickets,
+              }),
             })
           )}
           {kpiCard(
@@ -2490,14 +2521,28 @@ export default function JiraExecutiveDashboard() {
             `${formatInt(kpis.respInc)} incumplidos`,
             undefined,
             undefined,
-            renderInterannualComparison({
-              hasCurrentValue: comparisonKpis.current.hasJiraPeriodData,
-              currentValue: formatPct(comparisonKpis.current.respOkPct),
-              currentMetricValue: comparisonKpis.current.respOkPct,
-              hasPreviousValue: comparisonKpis.previous.hasJiraPeriodData,
-              previousValue: formatPct(comparisonKpis.previous.respOkPct),
-              previousMetricValue: comparisonKpis.previous.respOkPct,
+            renderInterannualComparison(comparisonKpis.years, {
               direction: "higher-is-better",
+              getValue: (k) => ({
+                hasValue: k.hasJiraPeriodData,
+                value: formatPct(k.respOkPct),
+                metricValue: k.respOkPct,
+              }),
+            })
+          )}
+          {kpiCard(
+            "SLA Clientes PMC",
+            formatPct(kpisPmc.respOkPct),
+            `${formatInt(kpisPmc.respInc)} incumplidos · Plan de Soporte Contratado (Cuenta Janis = 1 - PMC)`,
+            undefined,
+            undefined,
+            renderInterannualComparison(comparisonKpisPmc.years, {
+              direction: "higher-is-better",
+              getValue: (k) => ({
+                hasValue: k.hasJiraPeriodData,
+                value: formatPct(k.respOkPct),
+                metricValue: k.respOkPct,
+              }),
             })
           )}
           {kpiCard(
@@ -2506,30 +2551,13 @@ export default function JiraExecutiveDashboard() {
             `Cobertura: ${formatPct(kpis.csatCoverage)}`,
             undefined,
             undefined,
-            renderInterannualComparison({
-              hasCurrentValue: comparisonKpis.current.hasJiraPeriodData && comparisonKpis.current.csatAvg != null,
-              currentValue: comparisonKpis.current.csatAvg?.toFixed(2),
-              currentMetricValue: comparisonKpis.current.csatAvg,
-              hasPreviousValue: comparisonKpis.previous.hasJiraPeriodData && comparisonKpis.previous.csatAvg != null,
-              previousValue: comparisonKpis.previous.csatAvg?.toFixed(2),
-              previousMetricValue: comparisonKpis.previous.csatAvg,
+            renderInterannualComparison(comparisonKpis.years, {
               direction: "higher-is-better",
-            })
-          )}
-          {kpiCard(
-            "Tickets / Persona (prom. 6 meses)",
-            kpis.tpp6m == null ? "—" : kpis.tpp6m.toFixed(1),
-            "(excluye mes actual si no está cerrado)",
-            undefined,
-            <HealthBadge label={kpis.tppHealth.label} color={kpis.tppHealth.color} />,
-            renderInterannualComparison({
-              hasCurrentValue: comparisonKpis.current.hasJiraPeriodData && comparisonKpis.current.tpp != null,
-              currentValue: comparisonKpis.current.tpp?.toFixed(1),
-              currentMetricValue: comparisonKpis.current.tpp,
-              hasPreviousValue: comparisonKpis.previous.hasJiraPeriodData && comparisonKpis.previous.tpp != null,
-              previousValue: comparisonKpis.previous.tpp?.toFixed(1),
-              previousMetricValue: comparisonKpis.previous.tpp,
-              direction: "lower-is-better",
+              getValue: (k) => ({
+                hasValue: k.hasJiraPeriodData && k.csatAvg != null,
+                value: k.csatAvg?.toFixed(2),
+                metricValue: k.csatAvg,
+              }),
             })
           )}
         </div>
@@ -2541,14 +2569,13 @@ export default function JiraExecutiveDashboard() {
             "Filtrado por fecha y organización",
             undefined,
             undefined,
-            renderInterannualComparison({
-              hasCurrentValue: comparisonKpis.current.hasJanisPeriodData,
-              currentValue: `${formatInt(comparisonKpis.current.totalOrders)} órdenes`,
-              currentMetricValue: comparisonKpis.current.totalOrders,
-              hasPreviousValue: comparisonKpis.previous.hasJanisPeriodData,
-              previousValue: `${formatInt(comparisonKpis.previous.totalOrders)} órdenes`,
-              previousMetricValue: comparisonKpis.previous.totalOrders,
+            renderInterannualComparison(comparisonKpis.years, {
               direction: "neutral",
+              getValue: (k) => ({
+                hasValue: k.hasJanisPeriodData,
+                value: `${formatInt(k.totalOrders)} órdenes`,
+                metricValue: k.totalOrders,
+              }),
             })
           )}
           <Card className={UI.card}>
@@ -2565,31 +2592,35 @@ export default function JiraExecutiveDashboard() {
                 {janisKpis.ticketsPer1kOrders == null ? "—" : janisKpis.ticketsPer1kOrders.toFixed(2)}
               </div>
               <KpiPreviousPeriod>
-                {renderInterannualComparison({
-                  hasCurrentValue:
-                    comparisonKpis.current.hasJanisPeriodData &&
-                    comparisonKpis.current.hasJiraPeriodData &&
-                    comparisonKpis.current.ticketsPer1kOrders != null,
-                  currentValue:
-                    comparisonKpis.current.ordersPerTicketRounded == null
-                      ? "Sin tickets en el período"
-                      : `1 ticket cada ${formatInt(comparisonKpis.current.ordersPerTicketRounded)} órdenes (${comparisonKpis.current.ticketsPer1kOrders?.toFixed(2)})`,
-                  currentMetricValue: comparisonKpis.current.ticketsPer1kOrders,
-                  hasPreviousValue:
-                    comparisonKpis.previous.hasJanisPeriodData &&
-                    comparisonKpis.previous.hasJiraPeriodData &&
-                    comparisonKpis.previous.ticketsPer1kOrders != null,
-                  previousValue:
-                    comparisonKpis.previous.ordersPerTicketRounded == null
-                      ? "Sin tickets en el período"
-                      : `1 ticket cada ${formatInt(comparisonKpis.previous.ordersPerTicketRounded)} órdenes (${comparisonKpis.previous.ticketsPer1kOrders?.toFixed(2)})`,
-                  previousMetricValue: comparisonKpis.previous.ticketsPer1kOrders,
+                {renderInterannualComparison(comparisonKpis.years, {
                   direction: "lower-is-better",
+                  getValue: (k) => ({
+                    hasValue: k.hasJanisPeriodData && k.hasJiraPeriodData && k.ticketsPer1kOrders != null,
+                    value:
+                      k.ordersPerTicketRounded == null
+                        ? "Sin tickets en el período"
+                        : `1 ticket cada ${formatInt(k.ordersPerTicketRounded)} órdenes (${k.ticketsPer1kOrders?.toFixed(2)})`,
+                    metricValue: k.ticketsPer1kOrders,
+                  }),
                 })}
               </KpiPreviousPeriod>
             </CardContent>
           </Card>
-          {kpiCard("Janis Card 3", "—", "Próximamente", undefined, undefined, noPreviousPeriodData)}
+          {kpiCard(
+            "Tickets / Persona (prom. 6 meses)",
+            kpis.tpp6m == null ? "—" : kpis.tpp6m.toFixed(1),
+            "(excluye mes actual si no está cerrado)",
+            undefined,
+            <HealthBadge label={kpis.tppHealth.label} color={kpis.tppHealth.color} />,
+            renderInterannualComparison(comparisonKpis.years, {
+              direction: "lower-is-better",
+              getValue: (k) => ({
+                hasValue: k.hasJiraPeriodData && k.tpp != null,
+                value: k.tpp?.toFixed(1),
+                metricValue: k.tpp,
+              }),
+            })
+          )}
           {kpiCard("Janis Card 4", "—", "Próximamente", undefined, undefined, noPreviousPeriodData)}
           {kpiCard("Janis Card 5", "—", "Próximamente", undefined, undefined, noPreviousPeriodData)}
         </div>
