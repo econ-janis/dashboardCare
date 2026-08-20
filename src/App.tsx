@@ -1649,6 +1649,54 @@ export default function JiraExecutiveDashboard() {
     };
   }, [filtered]);
 
+  // CSAT por año real (calendario), no "interanual" (mismo sub-rango
+  // replicado por año). Cada año muestra el mes completo Ene-Dic si esta
+  // presente, o el rango de meses que efectivamente cae dentro del filtro
+  // Desde/Hasta actual (ej. año en curso todavia sin cerrar).
+  const csatYearlyBreakdown = useMemo(() => {
+    const byYear = new Map<
+      string,
+      { year: string; sum: number; rated: number; total: number; minMonthNum: number; maxMonthNum: number }
+    >();
+    for (const r of filtered) {
+      const year = String(r.year);
+      const monthNum = Number(r.month.slice(5, 7));
+      const cur = byYear.get(year) || {
+        year,
+        sum: 0,
+        rated: 0,
+        total: 0,
+        minMonthNum: monthNum,
+        maxMonthNum: monthNum,
+      };
+      cur.total += 1;
+      if (r.satisfaction != null) {
+        cur.sum += r.satisfaction;
+        cur.rated += 1;
+      }
+      if (monthNum < cur.minMonthNum) cur.minMonthNum = monthNum;
+      if (monthNum > cur.maxMonthNum) cur.maxMonthNum = monthNum;
+      byYear.set(year, cur);
+    }
+
+    return Array.from(byYear.values())
+      .map((y) => {
+        const isComplete = y.minMonthNum === 1 && y.maxMonthNum === 12;
+        const rangeLabel = isComplete
+          ? "año completo"
+          : `${monthShortName(`${y.year}-${String(y.minMonthNum).padStart(2, "0")}`)}–${monthShortName(
+              `${y.year}-${String(y.maxMonthNum).padStart(2, "0")}`
+            )}`;
+        return {
+          year: y.year,
+          label: `${y.year} (${rangeLabel})`,
+          csatAvg: y.rated > 0 ? y.sum / y.rated : null,
+          coverage: pct(y.rated, y.total),
+        };
+      })
+      .sort((a, b) => Number(b.year) - Number(a.year)); // mas reciente primero
+  }, [filtered]);
+
   const comparisonKpis = useMemo(
     () => ({
       years: buildComparisonKpisForYears(
@@ -2547,18 +2595,32 @@ export default function JiraExecutiveDashboard() {
           )}
           {kpiCard(
             "CSAT promedio (por año)",
-            kpis.csatAvg == null ? "—" : kpis.csatAvg.toFixed(2),
-            `Cobertura: ${formatPct(kpis.csatCoverage)}`,
+            csatYearlyBreakdown[0]?.csatAvg == null ? "—" : csatYearlyBreakdown[0].csatAvg.toFixed(2),
+            csatYearlyBreakdown[0]
+              ? `Cobertura: ${formatPct(csatYearlyBreakdown[0].coverage)} · ${csatYearlyBreakdown[0].label}`
+              : "Sin datos en el período",
             undefined,
             undefined,
-            renderInterannualComparison(comparisonKpis.years, {
-              direction: "higher-is-better",
-              getValue: (k) => ({
-                hasValue: k.hasJiraPeriodData && k.csatAvg != null,
-                value: k.csatAvg?.toFixed(2),
-                metricValue: k.csatAvg,
-              }),
-            })
+            csatYearlyBreakdown.filter((y) => y.csatAvg != null).length ? (
+              <div className="interannual-comparison">
+                {(() => {
+                  const withData = csatYearlyBreakdown.filter((y) => y.csatAvg != null);
+                  return withData.map((y, idx) => {
+                    const olderValue = withData[idx + 1] ? withData[idx + 1].csatAvg : null;
+                    const cls =
+                      idx === 0 ? metricPerformanceClass(y.csatAvg, olderValue, "higher-is-better") : "metric-neutral";
+                    return (
+                      <div key={y.year} className={cls}>
+                        - {y.label}: {y.csatAvg?.toFixed(2)}
+                      </div>
+                    );
+                  });
+                })()}
+                {csatYearlyBreakdown.filter((y) => y.csatAvg != null).length < 2 ? (
+                  <div className="metric-neutral">{noPreviousPeriodData}</div>
+                ) : null}
+              </div>
+            ) : null
           )}
         </div>
 
