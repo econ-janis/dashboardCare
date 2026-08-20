@@ -13,7 +13,6 @@ import {
   Tooltip,
   CartesianGrid,
   Legend,
-  ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1001,24 +1000,28 @@ function isNormalSchedule(d: Date) {
   return isWeekday && hour >= 6 && hour < 23;
 }
 
-function buildTicketsPer1kByMonth(monthRows: Array<{ month: string; tickets: number; orders: number }>) {
+// Métrica "Tickets x Órdenes": cuántas órdenes hay por cada ticket
+// (orders / tickets). A diferencia del viejo factor (tickets por cada
+// 1.000 órdenes), acá un valor MAS ALTO es MEJOR (cada ticket representa
+// mas volumen de órdenes, o sea, menos fricción relativa).
+function buildOrdersPerTicketByMonth(monthRows: Array<{ month: string; tickets: number; orders: number }>) {
   return monthRows
     .map((row) => {
       const orders = Number(row.orders) || 0;
       const tickets = Number(row.tickets) || 0;
-      if (orders <= 0) return null;
+      if (tickets <= 0) return null;
       return {
         month: row.month,
-        ticketsPer1k: (tickets / orders) * 1000,
+        ordersPerTicket: orders / tickets,
       };
     })
-    .filter(Boolean) as Array<{ month: string; ticketsPer1k: number }>;
+    .filter(Boolean) as Array<{ month: string; ordersPerTicket: number }>;
 }
 
-function buildTicketsPer1kInsight(points: Array<{ month: string; ticketsPer1k: number }>) {
+function buildOrdersPerTicketInsight(points: Array<{ month: string; ordersPerTicket: number }>) {
   if (!points || points.length < 3) return null;
 
-  const values = points.map((p) => Number(p.ticketsPer1k) || 0);
+  const values = points.map((p) => Number(p.ordersPerTicket) || 0);
   const n = values.length;
   const half = Math.floor(n / 2);
   const avg = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
@@ -1036,16 +1039,19 @@ function buildTicketsPer1kInsight(points: Array<{ month: string; ticketsPer1k: n
   const last3 = values.slice(-3);
   const last3Up = last3[0] < last3[1] && last3[1] < last3[2];
   const last3Down = last3[0] > last3[1] && last3[1] > last3[2];
-  const peakDropPct = values[maxIdx] > 0 ? (values[maxIdx] - values[n - 1]) / values[maxIdx] : 0;
+  // Mas alto = mejor en esta metrica, asi que el peor momento es un VALLE
+  // (minimo), no un pico. Una recuperacion clara es una suba sostenida
+  // desde ese valle hacia el final del periodo.
+  const troughRecoveryPct = values[minIdx] > 0 ? (values[n - 1] - values[minIdx]) / values[minIdx] : 0;
 
-  if (maxIdx < n - 1 && peakDropPct >= 0.2) {
-    return `Peak de fricción en ${monthLabel(points[maxIdx].month)} y recuperación clara hacia ${monthLabel(points[n - 1].month)}.`;
-  }
-  if (deltaPct >= 0.12 && last3Up) {
-    return "El ratio muestra deterioro progresivo; la fricción sube de forma sostenida.";
+  if (minIdx < n - 1 && troughRecoveryPct >= 0.2) {
+    return `Peor momento de fricción en ${monthLabel(points[minIdx].month)} y recuperación clara hacia ${monthLabel(points[n - 1].month)}.`;
   }
   if (deltaPct <= -0.12 && last3Down) {
-    return "Mejora operativa sostenida: el ratio cae de forma consistente en el período.";
+    return "El ratio muestra deterioro progresivo; la fricción aumenta de forma sostenida.";
+  }
+  if (deltaPct >= 0.12 && last3Up) {
+    return "Mejora operativa sostenida: la fricción disminuye de forma consistente en el período.";
   }
 
   const range = values[maxIdx] - values[minIdx];
@@ -1858,13 +1864,13 @@ export default function JiraExecutiveDashboard() {
     };
   }, [filtered, janisFiltered]);
 
-  const ticketsPer1kTrend = useMemo(
-    () => buildTicketsPer1kByMonth(series.ticketsVsOrdersByMonth || []),
+  const ordersPerTicketTrend = useMemo(
+    () => buildOrdersPerTicketByMonth(series.ticketsVsOrdersByMonth || []),
     [series.ticketsVsOrdersByMonth]
   );
-  const ticketsPer1kInsight = useMemo(
-    () => buildTicketsPer1kInsight(ticketsPer1kTrend),
-    [ticketsPer1kTrend]
+  const ordersPerTicketInsight = useMemo(
+    () => buildOrdersPerTicketInsight(ordersPerTicketTrend),
+    [ordersPerTicketTrend]
   );
 
   const estadoKeys = useMemo(() => {
@@ -2547,7 +2553,7 @@ export default function JiraExecutiveDashboard() {
           )}
           <Card className={UI.card}>
             <CardHeader className="pb-2">
-              <CardTitle className={UI.title}>Tickets por 1.000 órdenes</CardTitle>
+              <CardTitle className={UI.title}>Tickets x Ordenes</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-semibold tracking-tight text-slate-900">
@@ -2588,28 +2594,27 @@ export default function JiraExecutiveDashboard() {
           {kpiCard("Janis Card 5", "—", "Próximamente", undefined, undefined, noPreviousPeriodData)}
         </div>
 
-        {ticketsPer1kTrend.length >= 2 ? (
+        {ordersPerTicketTrend.length >= 2 ? (
           <Card className={UI.card + " mt-3"}>
             <CardHeader>
-              <CardTitle className={UI.title}>Evolución Tickets por 1.000 órdenes</CardTitle>
-              {ticketsPer1kInsight ? (
-                <p className={"mt-1 " + UI.subtle}>{ticketsPer1kInsight}</p>
+              <CardTitle className={UI.title}>Tickets x Ordenes</CardTitle>
+              {ordersPerTicketInsight ? (
+                <p className={"mt-1 " + UI.subtle}>{ordersPerTicketInsight}</p>
               ) : null}
             </CardHeader>
             <CardContent className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={ticketsPer1kTrend}>
+                <LineChart data={ordersPerTicketTrend}>
                   <CartesianGrid stroke={UI.grid} />
                   <XAxis dataKey="month" tickFormatter={monthLabel as any} />
-                  <YAxis />
+                  <YAxis tickFormatter={(v: any) => formatInt(Number(v) || 0)} width={70} />
                   <Tooltip
                     labelFormatter={(l) => monthLabel(String(l))}
-                    formatter={(v: any) => [Number(v).toFixed(2), "Tickets por 1.000 órdenes"]}
+                    formatter={(v: any) => [`1 ticket cada ${formatInt(Number(v) || 0)} órdenes`, "Tickets x Ordenes"]}
                   />
-                  <ReferenceLine y={0.15} stroke="#94a3b8" strokeDasharray="4 4" />
                   <Line
                     type="monotone"
-                    dataKey="ticketsPer1k"
+                    dataKey="ordersPerTicket"
                     stroke={UI.primary}
                     strokeWidth={2}
                     dot={{ r: 2 }}
