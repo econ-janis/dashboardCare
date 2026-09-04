@@ -597,7 +597,7 @@ function filterRowsForPeriod(
   startMonth: string | null,
   endMonth: string | null,
   orgFilterValue: string[],
-  assigneeFilterValue: string,
+  assigneeFilterValue: string[],
   statusFilterValue: string,
   orgMapping: OrgMapping = {}
 ) {
@@ -606,7 +606,7 @@ function filterRowsForPeriod(
   return sourceRows.filter((r) => {
     if (r.month < startMonth || r.month > endMonth) return false;
     if (orgFilterValue.length > 0 && !jiraKeys.has(normalizeOrgKey(r.organization))) return false;
-    if (assigneeFilterValue !== "all" && r.asignado !== assigneeFilterValue) return false;
+    if (assigneeFilterValue.length > 0 && !assigneeFilterValue.includes(r.asignado)) return false;
     if (statusFilterValue !== "all" && r.estado !== statusFilterValue) return false;
     return true;
   });
@@ -696,7 +696,7 @@ function buildComparisonKpisForYears(
   rows: Row[],
   janisRows: JanisRow[],
   orgFilter: string[],
-  assigneeFilter: string,
+  assigneeFilter: string[],
   statusFilter: string,
   orgMapping: OrgMapping
 ): { year: string; kpis: PeriodKpis }[] {
@@ -1204,7 +1204,7 @@ export default function JiraExecutiveDashboard() {
   });
 
   const [orgFilter, setOrgFilter] = useState<string[]>([]);
-  const [assigneeFilter, setAssigneeFilter] = useState("all");
+  const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState("all");
   const [language, setLanguage] = useState<"es" | "pt">("es");
 
@@ -1494,7 +1494,7 @@ export default function JiraExecutiveDashboard() {
       if (toMonth !== "all" && r.month > toMonth) return false;
       if (overlapRange && (r.month < overlapRange.start || r.month > overlapRange.end)) return false;
       if (orgFilter.length > 0 && !orgFilterKeys.jiraKeys.has(normalizeOrgKey(r.organization))) return false;
-      if (assigneeFilter !== "all" && r.asignado !== assigneeFilter) return false;
+      if (assigneeFilter.length > 0 && !assigneeFilter.includes(r.asignado)) return false;
       if (statusFilter !== "all" && r.estado !== statusFilter) return false;
       return true;
     });
@@ -1737,7 +1737,7 @@ export default function JiraExecutiveDashboard() {
       if (toMonth !== "all" && r.month > toMonth) return false;
       if (overlapRange && (r.month < overlapRange.start || r.month > overlapRange.end)) return false;
       if (orgFilter.length > 0 && !orgFilterKeys.jiraKeys.has(normalizeOrgKey(r.organization))) return false;
-      if (assigneeFilter !== "all" && r.asignado !== assigneeFilter) return false;
+      if (assigneeFilter.length > 0 && !assigneeFilter.includes(r.asignado)) return false;
       if (statusFilter !== "all" && r.estado !== statusFilter) return false;
       return true;
     });
@@ -2365,7 +2365,7 @@ export default function JiraExecutiveDashboard() {
                       fromMonth: fromMonth === "all" ? autoRange.minMonth || "all" : fromMonth,
                       toMonth: toMonth === "all" ? autoRange.maxMonth || "all" : toMonth,
                       org: orgFilter.length === 0 ? "Todas" : orgFilter.join(", "),
-                      assignee: assigneeFilter === "all" ? "Todos" : assigneeFilter,
+                      assignee: assigneeFilter.length === 0 ? "Todos" : assigneeFilter.join(", "),
                       status: statusFilter === "all" ? "Todos" : statusFilter,
                     },
                     autoRange,
@@ -2450,19 +2450,12 @@ export default function JiraExecutiveDashboard() {
           <Card className={UI.card}>
             <CardContent className="p-4">
               <div className={UI.subtle}>Asignado</div>
-              <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Todos" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos</SelectItem>
-                  {filterOptions.assignees.map((a) => (
-                    <SelectItem key={a} value={a}>
-                      {a}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MultiSelect
+                options={filterOptions.assignees}
+                selected={assigneeFilter}
+                onChange={setAssigneeFilter}
+                placeholder="Todos"
+              />
             </CardContent>
           </Card>
 
