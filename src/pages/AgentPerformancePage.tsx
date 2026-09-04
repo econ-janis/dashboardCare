@@ -22,12 +22,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { UI } from "@/lib/theme";
-import { formatInt, formatPct, monthLabel, pct, type Row } from "@/lib/csvParsing";
+import { classifyShift, formatInt, formatPct, monthLabel, pct, type Row, type Shift } from "@/lib/csvParsing";
 import { useDashboardData } from "@/context/DashboardDataContext";
 import { ViewNav } from "@/components/ViewNav";
 import { UploadPrompt } from "@/components/UploadPrompt";
 import { StatCard } from "@/components/StatCard";
 import { HourHeatmap, buildHourHeatmapData } from "@/components/HourHeatmap";
+import { DonutBreakdown, type DonutBreakdownEntry } from "@/components/DonutBreakdown";
 
 /**
  * Vista /agentPerformance: performance individual de un Asignado, sobre el
@@ -41,6 +42,15 @@ import { HourHeatmap, buildHourHeatmapData } from "@/components/HourHeatmap";
  */
 
 const RADAR_AXES = ["Volumen", "SLA", "CSAT", "Velocidad", "Cobertura"] as const;
+
+// Colores fijos por turno (Mañana/Tarde/Guardia), consistentes en toda la
+// vista (donut, ver también classifyShift en src/lib/csvParsing.ts).
+const SHIFT_COLORS: Record<Shift, string> = {
+  Mañana: "#2563eb", // UI.primary
+  Tarde: "#f59e0b", // UI.warning
+  Guardia: "#7c3aed", // violeta, distinguible de Mañana/Tarde
+};
+const SHIFT_ORDER: Shift[] = ["Mañana", "Tarde", "Guardia"];
 
 function monthRangeDayCount(
   fromMonth: string,
@@ -220,6 +230,14 @@ export default function AgentPerformancePage() {
 
   const hourHeatmap = useMemo(() => buildHourHeatmapData(agentRows), [agentRows]);
 
+  // Distribución de tickets del agente por turno (Mañana/Tarde/Guardia),
+  // ver classifyShift en src/lib/csvParsing.ts.
+  const shiftBreakdown = useMemo<DonutBreakdownEntry[]>(() => {
+    const counts: Record<Shift, number> = { Mañana: 0, Tarde: 0, Guardia: 0 };
+    for (const r of agentRows) counts[classifyShift(r.creada)] += 1;
+    return SHIFT_ORDER.map((name) => ({ name, value: counts[name], color: SHIFT_COLORS[name] }));
+  }, [agentRows]);
+
   const radarData = useMemo(() => {
     if (!agentStats || !agentAggregates.length) return [];
     const bestOf = (fn: (a: (typeof agentAggregates)[number]) => number) =>
@@ -382,6 +400,19 @@ export default function AgentPerformancePage() {
                     subtitle="Posición por volumen de tickets vs. el resto del equipo"
                   />
                 </div>
+
+                {/* Distribución por turno */}
+                <Card className={`${UI.card} mt-6`}>
+                  <CardHeader>
+                    <CardTitle className={UI.title}>Distribución de tickets por turno</CardTitle>
+                    <p className={`mt-1 ${UI.subtle}`}>
+                      Mañana 06:00–14:00 · Tarde 14:00–23:00 · Guardia (resto del horario y fin de semana)
+                    </p>
+                  </CardHeader>
+                  <CardContent className="h-auto md:h-72">
+                    <DonutBreakdown data={shiftBreakdown} />
+                  </CardContent>
+                </Card>
 
                 {/* Tickets/mes agente vs equipo */}
                 <Card className={`${UI.card} mt-6`}>

@@ -237,6 +237,21 @@ export function normalizeOrgKey(value: string) {
     .replace(/[^a-z0-9]/g, "");
 }
 
+export type Shift = "Mañana" | "Tarde" | "Guardia";
+
+// Turnos: Mañana 06:00–14:00 y Tarde 14:00–23:00 de lunes a viernes;
+// Guardia es el resto del horario en día de semana (23:00–06:00) y
+// sábado/domingo completo (24 hs).
+export function classifyShift(d: Date): Shift {
+  const day = d.getDay(); // 0=domingo, 6=sábado
+  const hour = d.getHours();
+  const isWeekend = day === 0 || day === 6;
+  if (isWeekend) return "Guardia";
+  if (hour >= 6 && hour < 14) return "Mañana";
+  if (hour >= 14 && hour < 23) return "Tarde";
+  return "Guardia";
+}
+
 export function isNormalSchedule(d: Date) {
   const day = d.getDay(); // 0=dom, 6=sáb
   const hour = d.getHours();
