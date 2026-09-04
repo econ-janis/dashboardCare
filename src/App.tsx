@@ -341,47 +341,6 @@ function renderPieSliceLabel(props: any) {
   );
 }
 
-// Espera (activamente, frame a frame) a que ningún gráfico/leyenda dentro
-// de `container` desborde su borde derecho. Se usa después de achicar el
-// contenedor (padding-right) para exportar: Recharts vuelve a medir sus
-// ResponsiveContainer vía ResizeObserver de forma asíncrona, y el tiempo
-// que tarda varía según el ancho de pantalla y la cantidad de datos, así
-// que un timeout fijo a veces no alcanza y el PDF termina con la última
-// etiqueta del eje cortada. Nunca espera más de `maxWaitMs`.
-async function waitForNoRightOverflow(container: HTMLElement, maxWaitMs = 1500) {
-  const deadline = Date.now() + maxWaitMs;
-  const hasOverflow = () => {
-    const containerRight = container.getBoundingClientRect().right;
-    // El <svg> de Recharts recorta (overflow:hidden) lo que dibuja de más,
-    // así que su propio bounding box nunca "desborda" aunque adentro haya
-    // texto (ej. la última etiqueta del eje X) clippeado contra ese borde.
-    // Por eso medimos directamente los <text> del SVG (su bounding box sí
-    // refleja la posición real del glyph) y, aparte, la leyenda HTML.
-    const candidates = container.querySelectorAll(
-      "svg.recharts-surface text, .recharts-legend-wrapper"
-    );
-    for (const el of Array.from(candidates)) {
-      if (el.getBoundingClientRect().right > containerRight + 1) return true;
-    }
-    return false;
-  };
-
-  // Dos frames estables sin desborde (no solo uno) para no confiar en una
-  // medición intermedia tomada a mitad de un reflow.
-  let stableFrames = 0;
-  while (Date.now() < deadline) {
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    if (hasOverflow()) {
-      stableFrames = 0;
-      continue;
-    }
-    stableFrames += 1;
-    if (stableFrames >= 2) return;
-  }
-  // Se agotó el tiempo de espera: seguimos igual (mejor un posible corte
-  // residual que dejar al usuario esperando indefinidamente el export).
-}
-
 // Captura el elemento del DOM tal cual está renderizado en pantalla (con
 // los filtros ya aplicados) y lo vuelca a un PDF paginado en A4. A
 // diferencia de un reporte "armado" aparte, esto garantiza que el PDF sea
@@ -406,37 +365,28 @@ async function exportElementToPdf(args: { element: HTMLElement; filename: string
       // ignore
     }
 
-    // Padding derecho temporal (solo para la captura, se restaura apenas
-    // termina): le da a las gráficas un margen real donde "sangrar" la
-    // última etiqueta del eje X sin que quede pegada/cortada en el borde
-    // del PDF. Al achicar el contenedor, Recharts vuelve a medir sus
-    // ResponsiveContainer (ResizeObserver, asíncrono) y redibuja un poco
-    // más angosto.
-    const EXPORT_RIGHT_PADDING_PX = 48;
-    const previousPaddingRight = args.element.style.paddingRight;
-    args.element.style.paddingRight = `${EXPORT_RIGHT_PADDING_PX}px`;
+    // Importante: NO tocamos el layout del contenedor (nada de
+    // padding/margin/resize) antes de capturar. Achicar el contenedor para
+    // "hacerle lugar" a la última etiqueta de un eje sonaba bien, pero
+    // Recharts recalcula qué ticks mostrar según el ancho disponible, y al
+    // achicarlo terminaba OCULTANDO la etiqueta del último punto en vez de
+    // sangrarla — dejando puntos de datos sin etiqueta y un hueco raro.
+    // En cambio, solo ampliamos el área CAPTURADA (crop) más allá del
+    // propio borde del contenedor: cualquier pixel que ya se dibuje un
+    // poco más allá de ese borde (ej. la mitad de la última etiqueta de
+    // un eje, que Recharts centra sobre el último tick) queda incluido en
+    // vez de cortado, sin alterar en nada cómo se ve/mide el dashboard.
+    const CAPTURE_SAFETY_MARGIN_PX = 48;
 
-    let canvas;
-    try {
-      // No alcanza con esperar un tiempo fijo: según el ancho de pantalla,
-      // Recharts a veces tarda más de un par de frames en re-medir y
-      // redibujar. En vez de adivinar cuánto esperar, chequeamos
-      // activamente que ningún gráfico/leyenda siga desbordando el borde
-      // derecho del contenedor antes de capturar.
-      await waitForNoRightOverflow(args.element);
-
-      canvas = await html2canvas(args.element, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: "#eef2f7",
-        windowWidth: args.element.scrollWidth,
-        // Los controles de acción (botones, inputs de archivo, selects) no
-        // son parte del "informe": se excluyen de la captura via .export-hide.
-        ignoreElements: (el: Element) => !!(el as HTMLElement).classList?.contains("export-hide"),
-      } as any);
-    } finally {
-      args.element.style.paddingRight = previousPaddingRight;
-    }
+    const canvas = await html2canvas(args.element, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: "#eef2f7",
+      width: args.element.scrollWidth + CAPTURE_SAFETY_MARGIN_PX,
+      // Los controles de acción (botones, inputs de archivo, selects) no
+      // son parte del "informe": se excluyen de la captura via .export-hide.
+      ignoreElements: (el: Element) => !!(el as HTMLElement).classList?.contains("export-hide"),
+    } as any);
 
     const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
 
@@ -2606,7 +2556,7 @@ export default function JiraExecutiveDashboard() {
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={ordersPerTicketTrend}>
                   <CartesianGrid stroke={UI.grid} />
-                  <XAxis dataKey="month" tickFormatter={monthLabel as any} />
+                  <XAxis dataKey="month" tickFormatter={monthLabel as any} interval="preserveStartEnd" />
                   <YAxis tickFormatter={(v: any) => formatInt(Number(v) || 0)} width={70} />
                   <Tooltip
                     labelFormatter={(l) => monthLabel(String(l))}
@@ -2637,7 +2587,7 @@ export default function JiraExecutiveDashboard() {
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={series.ticketsVsOrdersByMonth}>
                       <CartesianGrid stroke={UI.grid} />
-                      <XAxis dataKey="month" tickFormatter={monthLabel as any} />
+                      <XAxis dataKey="month" tickFormatter={monthLabel as any} interval="preserveStartEnd" />
                       <YAxis yAxisId="left" />
                       <YAxis yAxisId="right" orientation="right" />
                       <Tooltip labelFormatter={(l) => monthLabel(String(l))} />
@@ -2816,7 +2766,7 @@ export default function JiraExecutiveDashboard() {
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={series.ticketsByAssigneeByMonth}>
                   <CartesianGrid stroke={UI.grid} />
-                  <XAxis dataKey="month" tickFormatter={monthLabel as any} />
+                  <XAxis dataKey="month" tickFormatter={monthLabel as any} interval="preserveStartEnd" />
                   <YAxis tickFormatter={(v: any) => formatInt(Number(v) || 0)} width={60} allowDecimals={false} />
                   <Tooltip
                     labelFormatter={(l) => monthLabel(String(l))}
