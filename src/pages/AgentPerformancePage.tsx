@@ -40,7 +40,6 @@ import { HourHeatmap, buildHourHeatmapData } from "@/components/HourHeatmap";
  * agente.
  */
 
-const SIN_ASIGNAR = "(Sin asignar)";
 const RADAR_AXES = ["Volumen", "SLA", "CSAT", "Velocidad", "Cobertura"] as const;
 
 function monthRangeDayCount(
@@ -69,7 +68,11 @@ function buildAgentAggregates(periodRows: Row[], days: number) {
   >();
 
   for (const r of periodRows) {
-    const name = (r.asignado || "").trim() || SIN_ASIGNAR;
+    // periodRows ya viene sin tickets sin asignar (ver AgentPerformancePage):
+    // "sin asignar" no es una persona, no tiene sentido tratarlo como un
+    // agente más en el ranking/promedio de equipo.
+    const name = (r.asignado || "").trim();
+    if (!name) continue;
     const cur =
       byAgent.get(name) ||
       { name, tickets: 0, cumplido: 0, satSum: 0, satCount: 0, orgs: new Set<string>() };
@@ -106,9 +109,11 @@ export default function AgentPerformancePage() {
 
   // Todos los "Asignado" vistos alguna vez en el CSV (sin filtrar por
   // período), para el panel de Settings donde se decide quién cuenta como
-  // agente — independiente del rango de fechas elegido arriba.
+  // agente — independiente del rango de fechas elegido arriba. Los
+  // tickets sin asignar quedan afuera: "sin asignar" no es una persona,
+  // no tiene sentido decidir si "es agente" o no.
   const allAssigneeNames = useMemo(
-    () => Array.from(new Set(rows.map((r) => (r.asignado || "").trim() || SIN_ASIGNAR))).sort(),
+    () => Array.from(new Set(rows.map((r) => (r.asignado || "").trim()).filter(Boolean))).sort(),
     [rows]
   );
 
@@ -123,10 +128,25 @@ export default function AgentPerformancePage() {
       rows.filter((r) => {
         if (fromMonth !== "all" && r.month < fromMonth) return false;
         if (toMonth !== "all" && r.month > toMonth) return false;
-        if (!isAgent(r.asignado)) return false;
+        const name = (r.asignado || "").trim();
+        if (!name) return false; // tickets sin asignar: no cuentan como "agente"
+        if (!isAgent(name)) return false;
         return true;
       }),
     [rows, fromMonth, toMonth, isAgent]
+  );
+
+  // Sólo para mostrar el aviso de transparencia debajo de los filtros:
+  // cuántos tickets del período quedaron afuera de esta vista por no
+  // tener Asignado (independiente del roster de agentes).
+  const unassignedInRangeCount = useMemo(
+    () =>
+      rows.filter((r) => {
+        if (fromMonth !== "all" && r.month < fromMonth) return false;
+        if (toMonth !== "all" && r.month > toMonth) return false;
+        return !(r.asignado || "").trim();
+      }).length,
+    [rows, fromMonth, toMonth]
   );
 
   const days = useMemo(() => monthRangeDayCount(fromMonth, toMonth, autoRange), [fromMonth, toMonth, autoRange]);
@@ -148,7 +168,7 @@ export default function AgentPerformancePage() {
   }, [agentOptions]);
 
   const agentRows = useMemo(
-    () => periodRows.filter((r) => ((r.asignado || "").trim() || SIN_ASIGNAR) === selectedAgent),
+    () => periodRows.filter((r) => (r.asignado || "").trim() === selectedAgent),
     [periodRows, selectedAgent]
   );
 
@@ -168,10 +188,8 @@ export default function AgentPerformancePage() {
     const months = Array.from(new Set(periodRows.map((r) => r.month))).sort();
     return months.map((m) => {
       const monthRows = periodRows.filter((r) => r.month === m);
-      const agentTickets = monthRows.filter(
-        (r) => ((r.asignado || "").trim() || SIN_ASIGNAR) === selectedAgent
-      ).length;
-      const activeAgents = new Set(monthRows.map((r) => (r.asignado || "").trim() || SIN_ASIGNAR));
+      const agentTickets = monthRows.filter((r) => (r.asignado || "").trim() === selectedAgent).length;
+      const activeAgents = new Set(monthRows.map((r) => (r.asignado || "").trim()));
       const teamAvg = activeAgents.size ? monthRows.length / activeAgents.size : 0;
       return { month: m, agente: agentTickets, equipo: Number(teamAvg.toFixed(2)) };
     });
@@ -283,6 +301,13 @@ export default function AgentPerformancePage() {
                 </CardContent>
               </Card>
             </div>
+
+            {unassignedInRangeCount > 0 ? (
+              <div className={`mt-3 ${UI.subtle}`}>
+                Aviso: {formatInt(unassignedInRangeCount)} ticket{unassignedInRangeCount === 1 ? "" : "s"} sin
+                Asignado en el período no se incluyen en esta comparativa (no son de ningún agente).
+              </div>
+            ) : null}
 
             <div className="mt-3 flex justify-end">
               <Button variant="outline" onClick={() => setShowAgentSettings((v) => !v)}>
