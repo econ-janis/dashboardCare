@@ -67,18 +67,46 @@ export const MultiSelect = ({
     );
   };
 
-  const label = selected.length === 0 ? placeholder : selected.join(", ");
+  const removeOption = (option: string, e: React.MouseEvent | React.KeyboardEvent) => {
+    e.stopPropagation();
+    onChange(selected.filter((v) => v !== option));
+  };
 
   return (
     <div className="relative w-full" ref={containerRef}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex h-10 w-full items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm text-slate-700"
+        className="flex min-h-10 w-full items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm shadow-sm text-slate-700"
       >
-        <span className="truncate text-left" title={label}>
-          {label}
-        </span>
+        {selected.length === 0 ? (
+          <span className="truncate px-1 text-left text-slate-400">{placeholder}</span>
+        ) : (
+          <span className="flex flex-1 flex-wrap items-center gap-1 text-left">
+            {selected.map((option) => (
+              <span
+                key={option}
+                className="flex max-w-full items-center gap-1 rounded-full bg-blue-50 py-0.5 pl-2 pr-1 text-xs font-medium text-blue-700"
+              >
+                <span className="max-w-[10rem] truncate" title={option}>
+                  {option}
+                </span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Quitar ${option}`}
+                  onClick={(e) => removeOption(option, e)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") removeOption(option, e);
+                  }}
+                  className="flex h-3.5 w-3.5 shrink-0 cursor-pointer items-center justify-center rounded-full text-blue-500 hover:bg-blue-100 hover:text-blue-900"
+                >
+                  ×
+                </span>
+              </span>
+            ))}
+          </span>
+        )}
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="14"
