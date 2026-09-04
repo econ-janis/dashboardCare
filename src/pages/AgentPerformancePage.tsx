@@ -28,7 +28,7 @@ import { ViewNav } from "@/components/ViewNav";
 import { UploadPrompt } from "@/components/UploadPrompt";
 import { StatCard } from "@/components/StatCard";
 import { HourHeatmap, buildHourHeatmapData } from "@/components/HourHeatmap";
-import { DonutBreakdown, type DonutBreakdownEntry } from "@/components/DonutBreakdown";
+import { StackedShareBar, type StackedShareBarEntry } from "@/components/StackedShareBar";
 
 /**
  * Vista /agentPerformance: performance individual de un Asignado, sobre el
@@ -230,13 +230,16 @@ export default function AgentPerformancePage() {
 
   const hourHeatmap = useMemo(() => buildHourHeatmapData(agentRows), [agentRows]);
 
-  // Distribución de tickets del agente por turno (Mañana/Tarde/Guardia),
-  // ver classifyShift en src/lib/csvParsing.ts.
-  const shiftBreakdown = useMemo<DonutBreakdownEntry[]>(() => {
+  // Distribución de TODO el equipo por turno (Mañana/Tarde/Guardia) en el
+  // rango de fechas elegido — ver classifyShift en src/lib/csvParsing.ts.
+  // A propósito usa `periodRows` (sólo fecha + roster de agentes) y no
+  // `agentRows`: es una foto del período, no cambia al elegir un agente
+  // distinto en el dropdown.
+  const shiftBreakdown = useMemo<StackedShareBarEntry[]>(() => {
     const counts: Record<Shift, number> = { Mañana: 0, Tarde: 0, Guardia: 0 };
-    for (const r of agentRows) counts[classifyShift(r.creada)] += 1;
+    for (const r of periodRows) counts[classifyShift(r.creada)] += 1;
     return SHIFT_ORDER.map((name) => ({ name, value: counts[name], color: SHIFT_COLORS[name] }));
-  }, [agentRows]);
+  }, [periodRows]);
 
   const radarData = useMemo(() => {
     if (!agentStats || !agentAggregates.length) return [];
@@ -401,16 +404,17 @@ export default function AgentPerformancePage() {
                   />
                 </div>
 
-                {/* Distribución por turno */}
+                {/* Distribución por turno (todo el equipo, según el rango de fechas — no cambia con el Agente elegido) */}
                 <Card className={`${UI.card} mt-6`}>
                   <CardHeader>
                     <CardTitle className={UI.title}>Distribución de tickets por turno</CardTitle>
                     <p className={`mt-1 ${UI.subtle}`}>
-                      Mañana 06:00–14:00 · Tarde 14:00–23:00 · Guardia (resto del horario y fin de semana)
+                      Todo el equipo en el período elegido (no varía con el Agente seleccionado) · Mañana
+                      06:00–14:00 · Tarde 14:00–23:00 · Guardia (resto del horario y fin de semana)
                     </p>
                   </CardHeader>
-                  <CardContent className="h-auto md:h-72">
-                    <DonutBreakdown data={shiftBreakdown} />
+                  <CardContent className="h-auto py-2">
+                    <StackedShareBar data={shiftBreakdown} />
                   </CardContent>
                 </Card>
 
