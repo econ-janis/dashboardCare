@@ -365,27 +365,35 @@ async function exportElementToPdf(args: { element: HTMLElement; filename: string
       // ignore
     }
 
-    // Margen de seguridad horizontal: algunos elementos (última etiqueta del
-    // eje X de una gráfica, un nombre largo en una leyenda) pueden dibujarse
-    // unos pixeles más allá del borde derecho del contenedor. Capturando un
-    // poco más ancho que el contenedor evitamos que eso quede cortado; el
-    // sobrante extra es simplemente margen en blanco.
-    const captureOverflowBuffer = 32;
-    const captureWidth = args.element.scrollWidth + captureOverflowBuffer;
+    // Padding derecho temporal (solo para la captura, se restaura apenas
+    // termina): le da a las gráficas un margen real donde "sangrar" la
+    // última etiqueta del eje X sin que quede pegada/cortada en el borde
+    // del PDF. Al achicar el contenedor, Recharts vuelve a medir sus
+    // ResponsiveContainer (ResizeObserver) y redibuja un poco más angosto;
+    // por eso esperamos unos frames antes de capturar.
+    const EXPORT_RIGHT_PADDING_PX = 48;
+    const previousPaddingRight = args.element.style.paddingRight;
+    args.element.style.paddingRight = `${EXPORT_RIGHT_PADDING_PX}px`;
 
-    const canvas = await html2canvas(args.element, {
-      scale: 2,
-      useCORS: true,
-      backgroundColor: "#eef2f7",
-      // `width` amplía solo el recorte capturado (para no perder overflow);
-      // `windowWidth` se deja en el ancho real para no alterar el layout
-      // responsive (breakpoints de Tailwind) respecto de lo que se ve hoy.
-      width: captureWidth,
-      windowWidth: args.element.scrollWidth,
-      // Los controles de acción (botones, inputs de archivo, selects) no son
-      // parte del "informe": se excluyen de la captura via .export-hide.
-      ignoreElements: (el: Element) => !!(el as HTMLElement).classList?.contains("export-hide"),
-    } as any);
+    let canvas;
+    try {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+
+      canvas = await html2canvas(args.element, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#eef2f7",
+        windowWidth: args.element.scrollWidth,
+        // Los controles de acción (botones, inputs de archivo, selects) no
+        // son parte del "informe": se excluyen de la captura via .export-hide.
+        ignoreElements: (el: Element) => !!(el as HTMLElement).classList?.contains("export-hide"),
+      } as any);
+    } finally {
+      args.element.style.paddingRight = previousPaddingRight;
+    }
 
     const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
 
@@ -2553,7 +2561,7 @@ export default function JiraExecutiveDashboard() {
             </CardHeader>
             <CardContent className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={ordersPerTicketTrend} margin={{ top: 5, right: 28, bottom: 5, left: 0 }}>
+                <LineChart data={ordersPerTicketTrend}>
                   <CartesianGrid stroke={UI.grid} />
                   <XAxis dataKey="month" tickFormatter={monthLabel as any} />
                   <YAxis tickFormatter={(v: any) => formatInt(Number(v) || 0)} width={70} />
@@ -2584,7 +2592,7 @@ export default function JiraExecutiveDashboard() {
               <div className="h-full flex flex-col">
                 <div className="flex-1 min-h-0">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={series.ticketsVsOrdersByMonth} margin={{ top: 5, right: 12, bottom: 5, left: 0 }}>
+                    <LineChart data={series.ticketsVsOrdersByMonth}>
                       <CartesianGrid stroke={UI.grid} />
                       <XAxis dataKey="month" tickFormatter={monthLabel as any} />
                       <YAxis yAxisId="left" />
@@ -2763,7 +2771,7 @@ export default function JiraExecutiveDashboard() {
             </CardHeader>
             <CardContent className="h-96">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series.ticketsByAssigneeByMonth} margin={{ top: 5, right: 28, bottom: 5, left: 0 }}>
+                <LineChart data={series.ticketsByAssigneeByMonth}>
                   <CartesianGrid stroke={UI.grid} />
                   <XAxis dataKey="month" tickFormatter={monthLabel as any} />
                   <YAxis tickFormatter={(v: any) => formatInt(Number(v) || 0)} width={60} allowDecimals={false} />
