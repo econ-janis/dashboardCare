@@ -341,6 +341,47 @@ function renderPieSliceLabel(props: any) {
   );
 }
 
+// Espera (activamente, frame a frame) a que ningún gráfico/leyenda dentro
+// de `container` desborde su borde derecho. Se usa después de achicar el
+// contenedor (padding-right) para exportar: Recharts vuelve a medir sus
+// ResponsiveContainer vía ResizeObserver de forma asíncrona, y el tiempo
+// que tarda varía según el ancho de pantalla y la cantidad de datos, así
+// que un timeout fijo a veces no alcanza y el PDF termina con la última
+// etiqueta del eje cortada. Nunca espera más de `maxWaitMs`.
+async function waitForNoRightOverflow(container: HTMLElement, maxWaitMs = 1500) {
+  const deadline = Date.now() + maxWaitMs;
+  const hasOverflow = () => {
+    const containerRight = container.getBoundingClientRect().right;
+    // El <svg> de Recharts recorta (overflow:hidden) lo que dibuja de más,
+    // así que su propio bounding box nunca "desborda" aunque adentro haya
+    // texto (ej. la última etiqueta del eje X) clippeado contra ese borde.
+    // Por eso medimos directamente los <text> del SVG (su bounding box sí
+    // refleja la posición real del glyph) y, aparte, la leyenda HTML.
+    const candidates = container.querySelectorAll(
+      "svg.recharts-surface text, .recharts-legend-wrapper"
+    );
+    for (const el of Array.from(candidates)) {
+      if (el.getBoundingClientRect().right > containerRight + 1) return true;
+    }
+    return false;
+  };
+
+  // Dos frames estables sin desborde (no solo uno) para no confiar en una
+  // medición intermedia tomada a mitad de un reflow.
+  let stableFrames = 0;
+  while (Date.now() < deadline) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    if (hasOverflow()) {
+      stableFrames = 0;
+      continue;
+    }
+    stableFrames += 1;
+    if (stableFrames >= 2) return;
+  }
+  // Se agotó el tiempo de espera: seguimos igual (mejor un posible corte
+  // residual que dejar al usuario esperando indefinidamente el export).
+}
+
 // Captura el elemento del DOM tal cual está renderizado en pantalla (con
 // los filtros ya aplicados) y lo vuelca a un PDF paginado en A4. A
 // diferencia de un reporte "armado" aparte, esto garantiza que el PDF sea
@@ -369,18 +410,20 @@ async function exportElementToPdf(args: { element: HTMLElement; filename: string
     // termina): le da a las gráficas un margen real donde "sangrar" la
     // última etiqueta del eje X sin que quede pegada/cortada en el borde
     // del PDF. Al achicar el contenedor, Recharts vuelve a medir sus
-    // ResponsiveContainer (ResizeObserver) y redibuja un poco más angosto;
-    // por eso esperamos unos frames antes de capturar.
+    // ResponsiveContainer (ResizeObserver, asíncrono) y redibuja un poco
+    // más angosto.
     const EXPORT_RIGHT_PADDING_PX = 48;
     const previousPaddingRight = args.element.style.paddingRight;
     args.element.style.paddingRight = `${EXPORT_RIGHT_PADDING_PX}px`;
 
     let canvas;
     try {
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-      );
-      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+      // No alcanza con esperar un tiempo fijo: según el ancho de pantalla,
+      // Recharts a veces tarda más de un par de frames en re-medir y
+      // redibujar. En vez de adivinar cuánto esperar, chequeamos
+      // activamente que ningún gráfico/leyenda siga desbordando el borde
+      // derecho del contenedor antes de capturar.
+      await waitForNoRightOverflow(args.element);
 
       canvas = await html2canvas(args.element, {
         scale: 2,
