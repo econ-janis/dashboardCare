@@ -19,6 +19,7 @@
     "papaparse": "^5.5.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-router-dom": "^7.18.3",
     "recharts": "^3.7.0",
     "tailwind-merge": "^3.4.0"
   },
