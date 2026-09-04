@@ -18,6 +18,7 @@ import {
   Radar,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { UI } from "@/lib/theme";
@@ -95,25 +96,37 @@ function buildAgentAggregates(periodRows: Row[], days: number) {
 }
 
 export default function AgentPerformancePage() {
-  const { rows, autoRange, fromMonth, setFromMonth, toMonth, setToMonth } = useDashboardData();
+  const { rows, autoRange, fromMonth, setFromMonth, toMonth, setToMonth, isAgent, setAgentIncluded, agentRosterLoading } =
+    useDashboardData();
   const [selectedAgent, setSelectedAgent] = useState<string>("");
+  const [showAgentSettings, setShowAgentSettings] = useState(false);
 
   const minMonthBound = autoRange.minMonth ?? undefined;
   const maxMonthBound = autoRange.maxMonth ?? undefined;
 
-  const agentOptions = useMemo(
+  // Todos los "Asignado" vistos alguna vez en el CSV (sin filtrar por
+  // período), para el panel de Settings donde se decide quién cuenta como
+  // agente — independiente del rango de fechas elegido arriba.
+  const allAssigneeNames = useMemo(
     () => Array.from(new Set(rows.map((r) => (r.asignado || "").trim() || SIN_ASIGNAR))).sort(),
     [rows]
   );
+
+  // Sólo agentes (roster de Settings, ver DashboardDataContext): así el
+  // líder del equipo u otras cuentas no-agente no distorsionan el
+  // promedio del equipo, el ranking de carga ni el radar "vs. mejor del
+  // equipo".
+  const agentOptions = useMemo(() => allAssigneeNames.filter(isAgent), [allAssigneeNames, isAgent]);
 
   const periodRows = useMemo(
     () =>
       rows.filter((r) => {
         if (fromMonth !== "all" && r.month < fromMonth) return false;
         if (toMonth !== "all" && r.month > toMonth) return false;
+        if (!isAgent(r.asignado)) return false;
         return true;
       }),
-    [rows, fromMonth, toMonth]
+    [rows, fromMonth, toMonth, isAgent]
   );
 
   const days = useMemo(() => monthRangeDayCount(fromMonth, toMonth, autoRange), [fromMonth, toMonth, autoRange]);
@@ -270,6 +283,56 @@ export default function AgentPerformancePage() {
                 </CardContent>
               </Card>
             </div>
+
+            <div className="mt-3 flex justify-end">
+              <Button variant="outline" onClick={() => setShowAgentSettings((v) => !v)}>
+                {showAgentSettings ? "Cerrar Settings" : "⚙ Settings: Agentes"}
+              </Button>
+            </div>
+
+            {showAgentSettings ? (
+              <Card className={`${UI.card} mt-3`}>
+                <CardContent className="p-4">
+                  <div className="text-sm font-semibold text-slate-700">Settings: ¿Quién es agente?</div>
+                  <div className={`${UI.subtle} mt-1 max-w-2xl`}>
+                    Destildá a quienes responden tickets pero no son agentes del equipo (líderes, QA, cuentas de
+                    bot, etc.) para que no distorsionen el promedio del equipo, el ranking de carga ni el radar.
+                    Por defecto todos son agentes. Se guarda en la base de datos, compartido para todos los que
+                    usan el dashboard.
+                  </div>
+
+                  {agentRosterLoading ? (
+                    <div className={`${UI.subtle} mt-4`}>Cargando roster guardado…</div>
+                  ) : (
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-slate-500">
+                            <th className="py-2 pr-4 font-medium">Asignado</th>
+                            <th className="py-2 font-medium">Es agente</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {allAssigneeNames.map((name) => (
+                            <tr key={name} className="border-t border-slate-100">
+                              <td className="py-2 pr-4 text-slate-700">{name}</td>
+                              <td className="py-2">
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4 rounded border-slate-300"
+                                  checked={isAgent(name)}
+                                  onChange={(e) => setAgentIncluded(name, e.target.checked)}
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ) : null}
 
             {!agentStats ? (
               <Card className={`${UI.card} mt-6`}>
