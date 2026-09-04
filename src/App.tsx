@@ -254,16 +254,6 @@ function formatDateCLShort(d: Date) {
   return `${dd}/${mm}`;
 }
 
-function escapeHtml(s: any) {
-  const str = String(s ?? "");
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
 const MONTH_SHORT_NAMES = [
   "Ene",
   "Feb",
@@ -351,55 +341,39 @@ function renderPieSliceLabel(props: any) {
   );
 }
 
-async function exportExecutivePdfDirect(args: {
-  html: string;
-  filename: string;
-}) {
-  let iframe: HTMLIFrameElement | null = null;
-
+// Captura el elemento del DOM tal cual está renderizado en pantalla (con
+// los filtros ya aplicados) y lo vuelca a un PDF paginado en A4. A
+// diferencia de un reporte "armado" aparte, esto garantiza que el PDF sea
+// un espejo exacto de lo que el usuario está viendo al presionar Export.
+async function exportElementToPdf(args: { element: HTMLElement; filename: string }) {
   try {
+    // html2canvas-pro (fork de html2canvas) entiende los colores oklch/oklab
+    // que genera Tailwind v4 en tiempo real; el html2canvas original no los
+    // soporta y falla al capturar el dashboard tal cual está en pantalla.
     const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-      import("html2canvas"),
+      import("html2canvas-pro"),
       import("jspdf"),
     ]);
 
-    iframe = document.createElement("iframe");
-    iframe.style.position = "fixed";
-    iframe.style.left = "-10000px";
-    iframe.style.top = "0";
-    iframe.style.width = "794px";
-    iframe.style.height = "1123px";
-    iframe.style.border = "0";
-    iframe.style.background = "white";
-    document.body.appendChild(iframe);
-
-    const doc = iframe.contentDocument;
-    if (!doc) throw new Error("No se pudo inicializar el documento para exportar.");
-
-    doc.open();
-    doc.write(args.html);
-    doc.close();
-
-    await new Promise<void>((resolve) => setTimeout(resolve, 300));
-
     try {
       // @ts-ignore
-      if (doc.fonts && doc.fonts.ready) {
+      if (document.fonts && document.fonts.ready) {
         // @ts-ignore
-        await doc.fonts.ready;
+        await document.fonts.ready;
       }
     } catch {
       // ignore
     }
 
-    const target = doc.documentElement;
-
-    const canvas = await html2canvas(target, {
+    const canvas = await html2canvas(args.element, {
       scale: 2,
       useCORS: true,
-      backgroundColor: "#ffffff",
-      windowWidth: 794,
-    });
+      backgroundColor: "#eef2f7",
+      windowWidth: args.element.scrollWidth,
+      // Los controles de acción (botones, inputs de archivo, selects) no son
+      // parte del "informe": se excluyen de la captura via .export-hide.
+      ignoreElements: (el: Element) => !!(el as HTMLElement).classList?.contains("export-hide"),
+    } as any);
 
     const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
 
@@ -451,146 +425,8 @@ async function exportExecutivePdfDirect(args: {
     console.error("Export PDF failed", e);
     const msg = (e && (e.message || e.toString())) || "Error exportando PDF";
     throw new Error(msg);
-  } finally {
-    if (iframe && iframe.parentNode) iframe.parentNode.removeChild(iframe);
   }
 }
-
-function buildExecutiveReportHtml(args: {
-  title: string;
-  generatedAt: Date;
-  filters: {
-    fromMonth: string;
-    toMonth: string;
-    org: string;
-    assignee: string;
-    status: string;
-  };
-  autoRange: { minMonth: string | null; maxMonth: string | null };
-  executive: {
-    monthLabel: string;
-    prevMonthLabel: string;
-    insights: string[];
-    metrics: Array<{
-      label: string;
-      value: string;
-      mom: number | null;
-      status: "good" | "warn" | "bad" | "neutral";
-    }>;
-  };
-}) {
-  const { title, generatedAt, filters, autoRange, executive } = args;
-  const f = (v: any) => escapeHtml(v);
-
-  const gen = generatedAt;
-  const genStr = `${gen.getFullYear()}-${String(gen.getMonth() + 1).padStart(2, "0")}-${String(
-    gen.getDate()
-  ).padStart(2, "0")} ${String(gen.getHours()).padStart(2, "0")}:${String(
-    gen.getMinutes()
-  ).padStart(2, "0")}`;
-
-  const filterLine = [
-    `Archivo: ${f(autoRange.minMonth || "—")} → ${f(autoRange.maxMonth || "—")}`,
-    `Vista: ${f(filters.fromMonth)} → ${f(filters.toMonth)}`,
-    `Org: ${f(filters.org)}`,
-    `Asignado: ${f(filters.assignee)}`,
-    `Estado: ${f(filters.status)}`,
-  ].join(" • ");
-
-  const momText = (v: number | null) => {
-    if (v == null || !Number.isFinite(v)) return "Sin comparativo";
-    const sign = v > 0 ? "+" : "";
-    return `${sign}${v.toFixed(1)}% vs mes anterior`;
-  };
-
-  const statusClass = (s: "good" | "warn" | "bad" | "neutral") => `dot ${s}`;
-
-  const css = `
-  @page { size: A4; margin: 12mm; }
-  body { 
-    font-family: 'Inter', -apple-system, sans-serif; 
-    color: #1e293b; 
-    background-color: white; 
-  }
-  h1 { font-size: 20px; color: #0f172a; margin-bottom: 4px; }
-  h2 { font-size: 14px; color: #be185d; margin-bottom: 8px; margin-top: 0; }
-  .meta { font-size: 10px; color: #64748b; margin-bottom: 14px; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px; }
-  .badge { padding: 2px 6px; border-radius: 4px; background: #fce7f3; color: #9d174d; font-weight: 700; font-size: 9px; }
-  .block { border: 1px solid #f5d0fe; border-radius: 10px; padding: 12px; margin-bottom: 12px; background: #fdf2f8; }
-  .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .kpi { background: #fff; border: 1px solid #fbcfe8; border-radius: 8px; padding: 8px; }
-  .kpi .head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-  .dot { width: 10px; height: 10px; border-radius: 9999px; display:inline-block; }
-  .dot.good { background:#16a34a; }
-  .dot.warn { background:#f59e0b; }
-  .dot.bad { background:#dc2626; }
-  .dot.neutral { background:#64748b; }
-  .kpi .label { font-size: 9px; font-weight: 700; color: #475569; text-transform: uppercase; }
-  .kpi .value { font-size: 15px; font-weight: 700; color: #0f172a; }
-  .kpi .mom { font-size: 10px; color: #64748b; }
-  ul { margin: 6px 0 0 18px; padding: 0; }
-  li { margin: 5px 0; font-size: 11px; }
-  .subtle { font-size: 10px; color: #64748b; }
-`;
-  
-  
-
-  return `<!doctype html>
-  <html>
-    <head>
-      <meta charset="utf-8" />
-      <title>${f(title)}</title>
-      <style>${css}</style>
-    </head>
-    <body>
-      <h1>${f(title)}</h1>
-      <div class="meta">
-        <div><span class="badge">Informe Ejecutivo</span> • Generado: ${f(genStr)}</div>
-        <div style="margin-top:6px;">${filterLine}</div>
-      </div>
-
-      <div class="block">
-        <h2>1. Resumen Ejecutivo</h2>
-        <div class="subtle">Período actual: ${f(executive.monthLabel)} · comparado con ${f(
-    executive.prevMonthLabel
-  )}</div>
-        <div class="kpi-grid" style="margin-top:8px;">
-          ${executive.metrics
-            .map(
-              (k) => `<div class="kpi">
-                <div class="head"><span class="${statusClass(k.status)}"></span><span class="label">${f(
-                k.label
-              )}</span></div>
-                <div class="value">${f(k.value)}</div>
-                <div class="mom">${f(momText(k.mom))}</div>
-              </div>`
-            )
-            .join("")}
-        </div>
-      </div>
-
-      <div class="block">
-        <h2>2. Performance Operativa</h2>
-        <div class="subtle">Lectura rápida de volumen, velocidad de resolución y cumplimiento SLA para decisiones operativas.</div>
-      </div>
-
-      <div class="block">
-        <h2>3. Calidad / Impacto</h2>
-        <div class="subtle">Seguimiento de reaperturas, estabilidad de servicio y señales de riesgo para la experiencia del cliente.</div>
-      </div>
-
-      <div class="block">
-        <h2>4. Plan de Acción</h2>
-        <ul>
-          <li>Priorizar focos de backlog y reaperturas con objetivos de reducción para el próximo mes.</li>
-          <li>Definir acciones concretas para sostener (o recuperar) el cumplimiento SLA.</li>
-          <li>Alinear capacidad del equipo según el comportamiento de demanda observado.</li>
-        </ul>
-      </div>
-    </body>
-  </html>`;
-}
-
 
 function filterRowsForPeriod(
   sourceRows: Row[],
@@ -1109,6 +945,11 @@ export default function JiraExecutiveDashboard() {
   if (typeof window !== "undefined") runParserTestsOnce();
   const jiraFileInputRef = useRef<HTMLInputElement | null>(null);
   const janisFileInputRef = useRef<HTMLInputElement | null>(null);
+  // Contenedor con TODO el contenido visible del dashboard (filtros ya
+  // aplicados, KPIs, gráficas, tablas). El botón Export lo captura tal cual
+  // está en pantalla en ese momento, para que el PDF sea un espejo exacto
+  // de lo que se está viendo (incluidos los filtros vigentes).
+  const reportRef = useRef<HTMLDivElement | null>(null);
 
   const [rows, setRows] = useState<Row[]>([]);
   const [janisRows, setJanisRows] = useState<JanisRow[]>([]);
@@ -2266,15 +2107,15 @@ export default function JiraExecutiveDashboard() {
     setError(null);
     setFromMonth("all");
     setToMonth("all");
-    setOrgFilter("all");
-    setAssigneeFilter("all");
+    setOrgFilter([]);
+    setAssigneeFilter([]);
     setStatusFilter("all");
     setAutoRange({ minMonth: null, maxMonth: null });
   };
 
   return (
     <div className={`min-h-screen ${UI.pageBg} p-4 md:p-8`}>
-      <div className="mx-auto max-w-7xl">
+      <div className="mx-auto max-w-7xl" ref={reportRef}>
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">
@@ -2285,7 +2126,8 @@ export default function JiraExecutiveDashboard() {
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2">
+          {/* Controles de acción: no son parte del informe, se excluyen del PDF */}
+          <div className="export-hide flex flex-col sm:flex-row gap-2">
             <Select value={language} onValueChange={(v: "es" | "pt") => setLanguage(v)}>
               <SelectTrigger className="w-[150px] bg-white">
                 <SelectValue placeholder={executiveText.language} />
@@ -2349,8 +2191,10 @@ export default function JiraExecutiveDashboard() {
                     setError("No hay datos filtrados para exportar.");
                     return;
                   }
-
-                  setError("Generando PDF…");
+                  if (!reportRef.current) {
+                    setError("No se encontró el contenido del dashboard para exportar.");
+                    return;
+                  }
 
                   const now = new Date();
                   const y = now.getFullYear();
@@ -2358,22 +2202,9 @@ export default function JiraExecutiveDashboard() {
                   const d = String(now.getDate()).padStart(2, "0");
                   const filename = `Informe_Ejecutivo_Janis_Care_${y}${m}${d}.pdf`;
 
-                  const html = buildExecutiveReportHtml({
-                    title: "Janis Commerce -  Care Executive Dashboard",
-                    generatedAt: now,
-                    filters: {
-                      fromMonth: fromMonth === "all" ? autoRange.minMonth || "all" : fromMonth,
-                      toMonth: toMonth === "all" ? autoRange.maxMonth || "all" : toMonth,
-                      org: orgFilter.length === 0 ? "Todas" : orgFilter.join(", "),
-                      assignee: assigneeFilter.length === 0 ? "Todos" : assigneeFilter.join(", "),
-                      status: statusFilter === "all" ? "Todos" : statusFilter,
-                    },
-                    autoRange,
-                    executive: executiveReportData,
-                  });
-
-                  await exportExecutivePdfDirect({ html, filename });
-                  setError(null);
+                  // Exporta exactamente lo que se ve en pantalla en este momento
+                  // (con los filtros ya aplicados), no un reporte armado aparte.
+                  await exportElementToPdf({ element: reportRef.current, filename });
                 } catch (e: any) {
                   console.error(e);
                   setError(
@@ -3085,7 +2916,7 @@ export default function JiraExecutiveDashboard() {
         <div className="mt-6">
           <Card className="rounded-xl border border-[#ff9f1a]/60 bg-gradient-to-br from-[#03133f] via-[#081d4d] to-[#1a2140] text-white shadow-lg shadow-[#020b26]/50">
             <CardHeader>
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-end">
+              <div className="export-hide flex flex-col gap-3 md:flex-row md:items-start md:justify-end">
                 <Button
                   className="self-start border border-orange-300/50 bg-gradient-to-r from-[#ff8f2b] to-[#ff7600] text-white shadow-sm shadow-[#ff7600]/40 hover:from-[#ff9c43] hover:to-[#ff8b1f]"
                   disabled={!filtered.length}
