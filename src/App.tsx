@@ -63,6 +63,22 @@ const PIE_COLORS = [
   "#94a3b8", // Otros
 ];
 
+// Paleta categórica (hasta 8 series distinguibles, orden fijo validado
+// contra confusión por daltonismo). El 9no asignado en adelante se agrupa
+// en "Otros" en vez de generar un color nuevo.
+const ASSIGNEE_COLORS = [
+  "#2a78d6", // blue
+  "#eb6834", // orange
+  "#1baf7a", // aqua
+  "#eda100", // yellow
+  "#e87ba4", // magenta
+  "#008300", // green
+  "#4a3aa7", // violet
+  "#e34948", // red
+];
+const ASSIGNEE_OTHERS_COLOR = "#94a3b8";
+const MAX_ASSIGNEE_SERIES = ASSIGNEE_COLORS.length;
+
 function coalesce(a: any, b: any) {
   return a === null || a === undefined ? b : a;
 }
@@ -1853,6 +1869,34 @@ export default function JiraExecutiveDashboard() {
     const totalTickets = filtered.length;
     const topAssignees = count((r) => r.asignado).slice(0, 10);
 
+    // Cantidad de tickets por mes y por asignado, para comparar quién
+    // resolvió más en cada mes. Se limita a los N asignados con más
+    // volumen total (misma cantidad de colores disponibles en
+    // ASSIGNEE_COLORS); el resto se agrupa en "Otros".
+    const allAssigneesRanked = count((r) => r.asignado || "(Sin asignar)");
+    const topAssigneeNames = allAssigneesRanked
+      .slice(0, MAX_ASSIGNEE_SERIES)
+      .map((x) => x.name);
+    const hasOtherAssignees = allAssigneesRanked.length > topAssigneeNames.length;
+
+    const assigneeMonthMap = new Map<string, Map<string, number>>();
+    for (const r of filtered) {
+      const name = (r.asignado || "").trim() || "(Sin asignar)";
+      const seriesName = topAssigneeNames.includes(name) ? name : "Otros";
+      const monthMap = assigneeMonthMap.get(r.month) || new Map<string, number>();
+      monthMap.set(seriesName, (monthMap.get(seriesName) || 0) + 1);
+      assigneeMonthMap.set(r.month, monthMap);
+    }
+    const assigneeSeriesNames = hasOtherAssignees ? [...topAssigneeNames, "Otros"] : topAssigneeNames;
+    const ticketsByAssigneeByMonth = Array.from(assigneeMonthMap.keys())
+      .sort()
+      .map((m) => {
+        const monthMap = assigneeMonthMap.get(m) || new Map<string, number>();
+        const row: Record<string, any> = { month: m };
+        for (const name of assigneeSeriesNames) row[name] = monthMap.get(name) || 0;
+        return row;
+      });
+
     // Pie top 10 orgs + otros
     const allOrgs = count((r) => r.organization);
     const top10 = allOrgs.slice(0, 10);
@@ -1938,6 +1982,8 @@ export default function JiraExecutiveDashboard() {
       slaByYear,
       csatByYear,
       topAssignees,
+      ticketsByAssigneeByMonth,
+      assigneeSeriesNames,
       topOrgsPie,
       heatMap,
       hourHeatMap,
@@ -2896,6 +2942,43 @@ export default function JiraExecutiveDashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {series.ticketsByAssigneeByMonth.length >= 2 ? (
+          <Card className={UI.card + " mt-3"}>
+            <CardHeader>
+              <CardTitle className={UI.title}>Cantidad x Mes por Asignado</CardTitle>
+              <p className={"mt-1 " + UI.subtle}>
+                Comparativa de tickets resueltos por cada persona asignada, mes a mes.
+              </p>
+            </CardHeader>
+            <CardContent className="h-96">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={series.ticketsByAssigneeByMonth}>
+                  <CartesianGrid stroke={UI.grid} />
+                  <XAxis dataKey="month" tickFormatter={monthLabel as any} />
+                  <YAxis tickFormatter={(v: any) => formatInt(Number(v) || 0)} width={60} allowDecimals={false} />
+                  <Tooltip
+                    labelFormatter={(l) => monthLabel(String(l))}
+                    formatter={(v: any, name: any) => [formatInt(v), name]}
+                  />
+                  <Legend />
+                  {series.assigneeSeriesNames.map((name, i) => (
+                    <Line
+                      key={name}
+                      type="monotone"
+                      dataKey={name}
+                      name={name}
+                      stroke={name === "Otros" ? ASSIGNEE_OTHERS_COLOR : ASSIGNEE_COLORS[i % ASSIGNEE_COLORS.length]}
+                      strokeWidth={2}
+                      dot={{ r: 2 }}
+                      connectNulls
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {/* Heatmaps */}
         <div className="mt-6 grid grid-cols-1 gap-3">
