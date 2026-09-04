@@ -365,10 +365,22 @@ async function exportElementToPdf(args: { element: HTMLElement; filename: string
       // ignore
     }
 
+    // Margen de seguridad horizontal: algunos elementos (última etiqueta del
+    // eje X de una gráfica, un nombre largo en una leyenda) pueden dibujarse
+    // unos pixeles más allá del borde derecho del contenedor. Capturando un
+    // poco más ancho que el contenedor evitamos que eso quede cortado; el
+    // sobrante extra es simplemente margen en blanco.
+    const captureOverflowBuffer = 32;
+    const captureWidth = args.element.scrollWidth + captureOverflowBuffer;
+
     const canvas = await html2canvas(args.element, {
       scale: 2,
       useCORS: true,
       backgroundColor: "#eef2f7",
+      // `width` amplía solo el recorte capturado (para no perder overflow);
+      // `windowWidth` se deja en el ancho real para no alterar el layout
+      // responsive (breakpoints de Tailwind) respecto de lo que se ve hoy.
+      width: captureWidth,
       windowWidth: args.element.scrollWidth,
       // Los controles de acción (botones, inputs de archivo, selects) no son
       // parte del "informe": se excluyen de la captura via .export-hide.
@@ -1760,23 +1772,6 @@ export default function JiraExecutiveDashboard() {
       .map((x) => ({ year: x.year, csatAvg: x.cnt ? x.sum / x.cnt : null, responses: x.cnt }))
       .sort((a, b) => Number(a.year) - Number(b.year));
 
-    // Heatmap mes vs estado (solo últimos 6 meses)
-    const heatMap = (() => {
-      const states = Array.from(new Set(filtered.map((r) => r.estado || "(Sin estado)"))).sort();
-      const byM = new Map<string, any>();
-      for (const r of filtered) {
-        const key = r.month;
-        const obj = byM.get(key) || { month: key };
-        const s = r.estado || "(Sin estado)";
-        obj[s] = (obj[s] || 0) + 1;
-        byM.set(key, obj);
-      }
-      const allRows = Array.from(byM.values()).sort((a, b) => a.month.localeCompare(b.month));
-      const rows = allRows.slice(-6);
-      const range = rows.length ? `${rows[0].month} → ${rows[rows.length - 1].month}` : "—";
-      return { states, rows, range };
-    })();
-
     // Heatmap por hora
     const hourHeatMap = (() => {
       const hours = Array.from({ length: 24 }, (_, i) => i);
@@ -1826,7 +1821,6 @@ export default function JiraExecutiveDashboard() {
       ticketsByAssigneeByMonth,
       assigneeSeriesNames,
       topOrgsPie,
-      heatMap,
       hourHeatMap,
       weekHeatMap,
     };
@@ -1928,14 +1922,6 @@ export default function JiraExecutiveDashboard() {
       }),
     };
   }, [series.ticketsVsOrdersByYear, series.ticketsVsOrdersByMonth, filtered]);
-
-  const heatMaxMonthState = useMemo(() => {
-    let max = 0;
-    for (const r of series.heatMap.rows) {
-      for (const s of series.heatMap.states) max = Math.max(max, Number(r[s] || 0));
-    }
-    return max;
-  }, [series.heatMap]);
 
   const executiveReportData = useMemo(() => {
     const monthsSorted = Array.from(new Set(filtered.map((r) => r.month))).sort();
@@ -2567,7 +2553,7 @@ export default function JiraExecutiveDashboard() {
             </CardHeader>
             <CardContent className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={ordersPerTicketTrend}>
+                <LineChart data={ordersPerTicketTrend} margin={{ top: 5, right: 28, bottom: 5, left: 0 }}>
                   <CartesianGrid stroke={UI.grid} />
                   <XAxis dataKey="month" tickFormatter={monthLabel as any} />
                   <YAxis tickFormatter={(v: any) => formatInt(Number(v) || 0)} width={70} />
@@ -2598,7 +2584,7 @@ export default function JiraExecutiveDashboard() {
               <div className="h-full flex flex-col">
                 <div className="flex-1 min-h-0">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={series.ticketsVsOrdersByMonth}>
+                    <LineChart data={series.ticketsVsOrdersByMonth} margin={{ top: 5, right: 12, bottom: 5, left: 0 }}>
                       <CartesianGrid stroke={UI.grid} />
                       <XAxis dataKey="month" tickFormatter={monthLabel as any} />
                       <YAxis yAxisId="left" />
@@ -2777,7 +2763,7 @@ export default function JiraExecutiveDashboard() {
             </CardHeader>
             <CardContent className="h-96">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series.ticketsByAssigneeByMonth}>
+                <LineChart data={series.ticketsByAssigneeByMonth} margin={{ top: 5, right: 28, bottom: 5, left: 0 }}>
                   <CartesianGrid stroke={UI.grid} />
                   <XAxis dataKey="month" tickFormatter={monthLabel as any} />
                   <YAxis tickFormatter={(v: any) => formatInt(Number(v) || 0)} width={60} allowDecimals={false} />
@@ -2805,35 +2791,55 @@ export default function JiraExecutiveDashboard() {
         ) : null}
 
         {/* Heatmaps */}
-        <div className="mt-6 grid grid-cols-1 gap-3">
+        <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2">
           <Card className={UI.card}>
             <CardHeader>
-              <CardTitle className={UI.title}>Heatmap Mes vs Estado (últimos 6 meses)</CardTitle>
+              <CardTitle className={UI.title}>Heatmap Horario (por hora)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-6 gap-2">
+                {series.hourHeatMap.data.map((x) => (
+                  <div
+                    key={x.hour}
+                    className="rounded-lg border border-slate-200 p-2 text-center"
+                    style={heatBg(x.tickets, series.hourHeatMap.max)}
+                  >
+                    <div className="text-xs font-semibold">{String(x.hour).padStart(2, "0")}:00</div>
+                    <div className="text-sm">{x.tickets ? formatInt(x.tickets) : ""}</div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className={UI.card}>
+            <CardHeader>
+              <CardTitle className={UI.title}>Heatmap Semana (día vs hora)</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-sm">
                   <thead>
                     <tr className="text-left">
-                      <th className="p-2 border border-slate-200 bg-slate-50">Mes</th>
-                      {series.heatMap.states.map((s) => (
-                        <th key={s} className="p-2 border border-slate-200 bg-slate-50">
-                          {s}
+                      <th className="p-2 border border-slate-200 bg-slate-50">Hora</th>
+                      {series.weekHeatMap.days.map((d) => (
+                        <th key={d} className="p-2 border border-slate-200 bg-slate-50">
+                          {d}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {series.heatMap.rows.map((r: any) => (
-                      <tr key={r.month}>
+                    {series.weekHeatMap.matrix.map((row: any) => (
+                      <tr key={row.hour}>
                         <td className="p-2 border border-slate-200 font-semibold text-slate-700">
-                          {monthLabel(r.month)}
+                          {String(row.hour).padStart(2, "0")}:00
                         </td>
-                        {series.heatMap.states.map((s) => {
-                          const v = Number(r[s] || 0);
-                          const style = heatBg(v, heatMaxMonthState);
+                        {series.weekHeatMap.days.map((d) => {
+                          const v = Number(row[d] || 0);
+                          const style = heatBg(v, series.weekHeatMap.max);
                           return (
-                            <td key={s} className="p-2 border border-slate-200 text-center" style={style}>
+                            <td key={d} className="p-2 border border-slate-200 text-center" style={style}>
                               {v ? formatInt(v) : ""}
                             </td>
                           );
@@ -2845,68 +2851,6 @@ export default function JiraExecutiveDashboard() {
               </div>
             </CardContent>
           </Card>
-
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Card className={UI.card}>
-              <CardHeader>
-                <CardTitle className={UI.title}>Heatmap Horario (por hora)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-6 gap-2">
-                  {series.hourHeatMap.data.map((x) => (
-                    <div
-                      key={x.hour}
-                      className="rounded-lg border border-slate-200 p-2 text-center"
-                      style={heatBg(x.tickets, series.hourHeatMap.max)}
-                    >
-                      <div className="text-xs font-semibold">{String(x.hour).padStart(2, "0")}:00</div>
-                      <div className="text-sm">{x.tickets ? formatInt(x.tickets) : ""}</div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className={UI.card}>
-              <CardHeader>
-                <CardTitle className={UI.title}>Heatmap Semana (día vs hora)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-sm">
-                    <thead>
-                      <tr className="text-left">
-                        <th className="p-2 border border-slate-200 bg-slate-50">Hora</th>
-                        {series.weekHeatMap.days.map((d) => (
-                          <th key={d} className="p-2 border border-slate-200 bg-slate-50">
-                            {d}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {series.weekHeatMap.matrix.map((row: any) => (
-                        <tr key={row.hour}>
-                          <td className="p-2 border border-slate-200 font-semibold text-slate-700">
-                            {String(row.hour).padStart(2, "0")}:00
-                          </td>
-                          {series.weekHeatMap.days.map((d) => {
-                            const v = Number(row[d] || 0);
-                            const style = heatBg(v, series.weekHeatMap.max);
-                            return (
-                              <td key={d} className="p-2 border border-slate-200 text-center" style={style}>
-                                {v ? formatInt(v) : ""}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
         </div>
 
         <div className="mt-6 text-xs text-slate-500">
