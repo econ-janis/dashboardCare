@@ -2270,10 +2270,13 @@ export default function CareDashboardPage() {
           Sugerencia: aplica enfoque Pareto 80/20 sobre Top Organizaciones/Asignados para reducir demanda recurrente.
         </div>
 
-        <div className="mt-6">
+        {/* Reporte Ejecutivo: es una herramienta de la app (botón + panel
+            interactivo), no contenido del informe exportado — se excluye
+            entera de la captura via .export-hide. */}
+        <div className="export-hide mt-6">
           <Card className="rounded-xl border border-[#ff9f1a]/60 bg-gradient-to-br from-[#03133f] via-[#081d4d] to-[#1a2140] text-white shadow-lg shadow-[#020b26]/50">
             <CardHeader>
-              <div className="export-hide flex flex-col gap-3 md:flex-row md:items-start md:justify-end">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-end">
                 <Button
                   className="self-start border border-orange-300/50 bg-gradient-to-r from-[#ff8f2b] to-[#ff7600] text-white shadow-sm shadow-[#ff7600]/40 hover:from-[#ff9c43] hover:to-[#ff8b1f]"
                   disabled={!filtered.length}
