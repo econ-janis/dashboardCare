@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   LineChart,
   Line,
@@ -29,6 +29,7 @@ import { UploadPrompt } from "@/components/UploadPrompt";
 import { StatCard } from "@/components/StatCard";
 import { HourHeatmap, buildHourHeatmapData } from "@/components/HourHeatmap";
 import { StackedShareBar, type StackedShareBarEntry } from "@/components/StackedShareBar";
+import { exportElementToPdf } from "@/lib/exportPdf";
 
 /**
  * Vista /agentPerformance: performance individual de un Asignado, sobre el
@@ -113,6 +114,12 @@ export default function AgentPerformancePage() {
     useDashboardData();
   const [selectedAgent, setSelectedAgent] = useState<string>("");
   const [showAgentSettings, setShowAgentSettings] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Contenedor con TODO el contenido visible de esta vista (filtros ya
+  // aplicados, KPIs, gráficas), igual que reportRef en CareDashboardPage:
+  // el botón Exportar lo captura tal cual está en pantalla en ese momento.
+  const reportRef = useRef<HTMLDivElement | null>(null);
 
   const minMonthBound = autoRange.minMonth ?? undefined;
   const maxMonthBound = autoRange.maxMonth ?? undefined;
@@ -264,15 +271,71 @@ export default function AgentPerformancePage() {
 
   return (
     <div className={`min-h-screen ${UI.pageBg} p-4 md:p-8`}>
-      <div className="mx-auto max-w-7xl">
+      <div className="mx-auto max-w-7xl" ref={reportRef}>
         <ViewNav />
 
-        <div>
-          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">Performance por Agente</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Performance individual de cada persona asignada, sobre el mismo CSV de Jira cargado en el dashboard.
-          </p>
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">Performance por Agente</h1>
+            <p className="text-sm text-slate-500 mt-1">
+              Performance individual de cada persona asignada, sobre el mismo CSV de Jira cargado en el dashboard.
+            </p>
+          </div>
+
+          {rows.length > 0 ? (
+            /* Controles de acción: no son parte del informe, se excluyen del PDF */
+            <div className="export-hide flex flex-col sm:flex-row gap-2">
+              <Button variant="outline" onClick={() => setShowAgentSettings((v) => !v)}>
+                {showAgentSettings ? "Cerrar Settings" : "⚙ Settings: Agentes"}
+              </Button>
+              <Button
+                className="text-white"
+                style={{ backgroundColor: UI.primary }}
+                disabled={exporting || !agentStats}
+                onClick={async () => {
+                  setExporting(true);
+                  setError(null);
+
+                  try {
+                    if (!agentStats) {
+                      setError("No hay datos para exportar.");
+                      return;
+                    }
+                    if (!reportRef.current) {
+                      setError("No se encontró el contenido de la vista para exportar.");
+                      return;
+                    }
+
+                    const now = new Date();
+                    const y = now.getFullYear();
+                    const m = String(now.getMonth() + 1).padStart(2, "0");
+                    const d = String(now.getDate()).padStart(2, "0");
+                    const safeAgent = selectedAgent.replace(/[^\p{L}\p{N}]+/gu, "_");
+                    const filename = `Performance_Agente_${safeAgent}_${y}${m}${d}.pdf`;
+
+                    // Exporta exactamente lo que se ve en pantalla en este momento
+                    // (con los filtros y el agente ya elegidos), no un reporte armado aparte.
+                    await exportElementToPdf({ element: reportRef.current, filename });
+                  } catch (e: any) {
+                    console.error(e);
+                    setError(
+                      (e && (e.message || String(e))) ||
+                        "No se pudo exportar (descarga directa). Si tu entorno no incluye html2canvas/jspdf, hay que agregarlos."
+                    );
+                  } finally {
+                    setExporting(false);
+                  }
+                }}
+              >
+                {exporting ? "Exportando…" : "Exportar"}
+              </Button>
+            </div>
+          ) : null}
         </div>
+
+        {error ? (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">{error}</div>
+        ) : null}
 
         {rows.length === 0 ? (
           <UploadPrompt />
@@ -329,12 +392,6 @@ export default function AgentPerformancePage() {
                 Asignado en el período no se incluyen en esta comparativa (no son de ningún agente).
               </div>
             ) : null}
-
-            <div className="mt-3 flex justify-end">
-              <Button variant="outline" onClick={() => setShowAgentSettings((v) => !v)}>
-                {showAgentSettings ? "Cerrar Settings" : "⚙ Settings: Agentes"}
-              </Button>
-            </div>
 
             {showAgentSettings ? (
               <Card className={`${UI.card} mt-3`}>
