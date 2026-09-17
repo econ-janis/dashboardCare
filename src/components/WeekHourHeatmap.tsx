@@ -8,6 +8,11 @@ import { formatInt } from "@/lib/csvParsing";
  * usado por la tab "Team Data" para la actividad combinada (comentarios +
  * cambios de estado) de cada agente. Mismo criterio de color (heatBg) que
  * HourHeatmap, para que ambos heatmaps del dashboard se vean consistentes.
+ *
+ * OJO: cada celda suma TODOS los días del rango elegido que caen en ese
+ * día-de-semana (ej. "Sáb 08h" = la actividad a las 8am de TODOS los
+ * sábados del período, no la de un 08/agosto puntual) — no confundir esta
+ * grilla hora-del-día con la tabla de arriba, que sí es por día calendario.
  */
 
 const DAY_LABELS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
@@ -26,6 +31,10 @@ export function WeekHourHeatmap({
     <Card className={UI.card}>
       <CardHeader>
         <CardTitle className={UI.title}>{title}</CardTitle>
+        <p className={`mt-1 ${UI.subtle}`}>
+          Cada celda suma la actividad a esa hora en TODOS los días del período que caen en ese día de la semana
+          (no es un día calendario puntual).
+        </p>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
@@ -35,7 +44,7 @@ export function WeekHourHeatmap({
                 <th className="text-xs font-normal text-slate-400"> </th>
                 {HOURS.map((h) => (
                   <th key={h} className="px-0 text-center text-[10px] font-normal text-slate-400">
-                    {h}
+                    {String(h).padStart(2, "0")}h
                   </th>
                 ))}
               </tr>
