@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { DashboardDataProvider } from "@/context/DashboardDataContext";
 import CareDashboardPage from "@/pages/CareDashboardPage";
 import AgentPerformancePage from "@/pages/AgentPerformancePage";
+import TeamDataPage from "@/pages/TeamDataPage";
 
 export default function App() {
   return (
@@ -10,6 +11,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<CareDashboardPage />} />
           <Route path="/agentPerformance" element={<AgentPerformancePage />} />
+          <Route path="/teamData" element={<TeamDataPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
