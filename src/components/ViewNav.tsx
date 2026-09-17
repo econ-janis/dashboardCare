@@ -3,8 +3,8 @@ import { NavLink } from "react-router-dom";
 import { UI } from "@/lib/theme";
 
 /**
- * Navegación entre las vistas del dashboard (principal y
- * /agentPerformance), mostrada arriba en ambas páginas.
+ * Navegación entre las vistas del dashboard (principal, /agentPerformance
+ * y /teamData), mostrada arriba en las tres páginas.
  */
 export function ViewNav() {
   const tabClass = ({ isActive }: { isActive: boolean }) =>
@@ -21,6 +21,9 @@ export function ViewNav() {
       </NavLink>
       <NavLink to="/agentPerformance" className={tabClass} style={tabStyle}>
         Performance por agente
+      </NavLink>
+      <NavLink to="/teamData" className={tabClass} style={tabStyle}>
+        Team Data
       </NavLink>
     </nav>
   );
