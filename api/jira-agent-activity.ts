@@ -8,6 +8,13 @@
 // API REST de Jira (search con expand=changelog, con fallback a
 // /issue/{key}/changelog cuando el changelog viene truncado).
 //
+// IMPORTANTE: Atlassian eliminó /rest/api/3/search (HTTP 410 desde
+// septiembre 2025, ver https://developer.atlassian.com/changelog/#CHANGE-2046).
+// El endpoint vigente es /rest/api/3/search/jql, que pagina con
+// `nextPageToken` en vez de `startAt`/`total` (la respuesta ya no trae
+// `total`: se sabe que no hay más páginas cuando `nextPageToken` no viene
+// en la respuesta).
+//
 // Variables de entorno requeridas (Vercel -> Project Settings ->
 // Environment Variables):
 //   JIRA_EMAIL     - cuenta de Atlassian con acceso al proyecto JCS
@@ -151,19 +158,20 @@ export default async function handler(req: any, res: any) {
   const jql = `project = ${project} AND updated >= "${from}" AND updated <= "${toExclusive}"`;
 
   try {
-    let startAt = 0;
-    let total = Infinity;
+    let pageToken: string | undefined;
     let issuesSeen = 0;
     let truncated = false;
 
-    while (startAt < total) {
-      const data: any = await jiraFetch(
-        site,
-        "/rest/api/3/search",
-        { jql, fields: "comment", expand: "changelog", maxResults: 100, startAt },
-        authHeader
-      );
-      total = Number(data.total) || 0;
+    while (true) {
+      const params: Record<string, string | number> = {
+        jql,
+        fields: "comment",
+        expand: "changelog",
+        maxResults: 100,
+      };
+      if (pageToken) params.nextPageToken = pageToken;
+
+      const data: any = await jiraFetch(site, "/rest/api/3/search/jql", params, authHeader);
       const issues: any[] = data.issues || [];
 
       for (const issue of issues) {
@@ -211,8 +219,12 @@ export default async function handler(req: any, res: any) {
       }
 
       issuesSeen += issues.length;
-      startAt += issues.length;
-      if (issues.length === 0) break; // resguardo: evita loop infinito si la API deja de devolver antes de `total`
+      pageToken = data.nextPageToken;
+      // Sin `nextPageToken` en la respuesta, no hay más páginas (la API ya
+      // no devuelve `total`, ver nota arriba). `issues.length === 0` es un
+      // resguardo extra por si la API devuelve una página vacía sin cortar
+      // el token antes.
+      if (!pageToken || issues.length === 0) break;
       if (issuesSeen >= MAX_ISSUES) {
         truncated = true;
         break;
